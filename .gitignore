@@ -1,0 +1,35 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Datasets (downloadable — don't commit) ----
+data/CrackForest/
+data/raw/images/*
+data/raw/masks/*
+
+# ---- Generated outputs ----
+data/results/*
+outputs/figures/*
+outputs/metrics.csv
+
+# keep the folder structure in git
+!**/.gitkeep
+
+# ---- Large media ----
+*.mp4
+
+# ---- OS / editor junk ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
