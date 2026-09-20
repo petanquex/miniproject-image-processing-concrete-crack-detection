@@ -13,13 +13,24 @@ def to_grayscale(image):
 
 
 def denoise(gray, ksize=5):
-    """Reduce noise with a Gaussian blur (odd kernel size)."""
+    """
+    Reduce noise with a Gaussian blur (odd kernel size).
+    ksize <= 1 skips the blur, so this step can be ablated.
+    """
+    if ksize <= 1:
+        return gray
     ksize = ksize if ksize % 2 == 1 else ksize + 1
     return cv2.GaussianBlur(gray, (ksize, ksize), 0)
 
 
 def enhance_contrast(gray, clip_limit=2.0, tile=8):
-    """Boost local contrast with CLAHE so dark cracks stand out."""
+    """
+    Boost local contrast with CLAHE so dark cracks stand out.
+    clip_limit <= 0 skips CLAHE, so this step can be ablated. (Note that
+    passing 0 straight to cv2 would *disable clipping*, not disable CLAHE.)
+    """
+    if clip_limit <= 0:
+        return gray
     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile, tile))
     return clahe.apply(gray)
 

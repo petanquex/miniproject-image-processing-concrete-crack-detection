@@ -407,3 +407,210 @@ python src\select_params.py --results outputs\tune_results_otsu.csv --method ots
 # วัดผล Otsu เต็ม 118 ภาพ พร้อม confusion matrix
 python main.py --input data\raw\images --gt data\raw\masks --method otsu --params outputs\tuned_params_otsu.json --outdir data\results_otsu --figdir outputs\figures_otsu --csv outputs\metrics_otsu.csv --confusion outputs\confusion_otsu.txt
 ```
+
+---
+
+## 2026-09-20 (ต่อ) — Pre-processing, Edge-based baselines, Failure cases
+
+### 1. จูนและ ablate step 1 (pre-processing) — `src/tune_preprocess.py`
+
+**ที่มา:** `tune.py` ทำ pre-process ครั้งเดียวนอกลูปแล้วใช้ซ้ำทุก combination ซึ่งเป็นเหตุผลที่มันเร็ว
+แต่ก็แปลว่า `blur_ksize` / `clip_limit` / `tile` **ไม่เคยอยู่ในการค้นหาเลยตั้งแต่ต้นโปรเจกต์**
+ค่าที่ใช้มาตลอดคือ default วันแรก และไม่เคยมีตัวเลขยืนยัน
+
+เขียนสคริปต์แยกที่ตรึง step 2-4 ไว้ที่ค่าที่ ship แล้วกวาดเฉพาะ pre-processing (65 combinations
+หลังตัดตัวซ้ำ — เมื่อปิด CLAHE ค่า tile ไม่มีผล) ใช้ protocol เดียวกับ `select_params.py`
+
+เพิ่มความสามารถให้ปิดแต่ละขั้นได้ใน `preprocessing.py`: `blur_ksize <= 1` = ไม่เบลอ,
+`clip_limit <= 0` = ไม่ทำ CLAHE (ระวัง: ถ้าส่ง 0 เข้า `cv2.createCLAHE` ตรงๆ มันแปลว่า
+**ปิดการ clip** ไม่ใช่ปิด CLAHE — คนละความหมาย)
+
+**Ablation ของ step 1:**
+
+| Blur | CLAHE | Dice ดีที่สุด | ค่าที่ดีที่สุด |
+|---|---|---|---|
+| เปิด | เปิด | **0.4929** | blur 7, CLAHE 2.0/4 |
+| ปิด | เปิด | 0.4197 | no blur, CLAHE 1.0/4 |
+| ปิด | ปิด | 0.2699 | — |
+| เปิด | ปิด | 0.2306 | blur 3 |
+
+อ่านตารางนี้ได้ 2 อย่าง:
+
+1. **CLAHE คือหัวใจของ step 1** ถ้าเอาออก Dice ตกจาก 0.49 เหลือ 0.23 คือหายไปกว่าครึ่ง
+   เพราะ adaptive threshold ต้องการ local contrast ที่ชัดพอจะแยกรอยร้าวจากผิวถนน
+2. **Blur อย่างเดียวทำให้แย่ลง** (0.2306) แย่กว่าไม่ทำอะไรเลย (0.2699) ด้วยซ้ำ
+   เพราะรอยร้าวบางมาก การเบลอไปกลบมันทิ้งโดยไม่ได้อะไรคืน — blur จะคุ้มก็ต่อเมื่อมี CLAHE
+   ดึง contrast กลับมาให้ นี่คือ **interaction** ที่ไม่เห็นถ้าทดสอบทีละตัว
+
+**ค่าที่ชนะคือ `blur 5, CLAHE 2.0, tile 8` ซึ่งตรงกับ default เดิมพอดี** — ไม่ต้องเปลี่ยนอะไร
+แต่ตอนนี้มันเป็นค่าที่**พิสูจน์แล้ว** ไม่ใช่ค่าที่เดาไว้
+
+**เช็ค bias:** ค่า step 2-4 ที่ใช้ตรึงถูกจูนมาบน pre-processing ชุดเดิม จึงเข้าข้างค่าเดิมอยู่กลายๆ
+เพิ่ม `--joint` ที่ re-optimize step 2-4 ใหม่ให้ candidate แต่ละตัวจาก shortlist 200 อันดับแรก:
+
+| Pre-processing | steps 2-4 ที่ re-optimize แล้ว | Held-out Dice |
+|---|---|---|
+| blur 5, CLAHE 2.0/8 (ปัจจุบัน) | 51, 15, 3, 3, 80, 3.0 | 0.5068 |
+| blur 5, CLAHE 2.0/4 | 51, 21, 5, 3, 50, 3.0 | 0.5115 |
+| blur 7, CLAHE 2.0/4 | 35, 15, 5, 3, 50, 3.0 | 0.5102 |
+| blur 7, CLAHE 2.0/8 | 35, 15, 5, 3, 50, 3.0 | 0.5080 |
+| blur 9, CLAHE 2.0/8 | 25, 10, 3, 3, 80, 2.0 | 0.5109 |
+
+ทั้ง 5 ตัวห่างกันไม่เกิน 0.005 → **pre-processing ไม่ใช่ปุ่มที่ไว** ตราบใดที่ยังเปิด CLAHE ไว้
+ตัวเลข 0.5115 ที่ดูสูงกว่านั้นเลือกจาก held-out ซึ่งเป็นการแอบดูข้อสอบ จึงไม่เอามาใช้
+ยึดตาม protocol เดิมคือเลือกจาก train → ได้ค่า default เดิม ไม่เปลี่ยนค่าที่ ship
+
+### 2. Edge-based baselines (Canny / Sobel)
+
+โจทย์ข้อ 4 ต้องการให้ literature review อธิบายเหตุผลที่เลือก threshold-based แทน edge-based
+การมีตัวเลขของตัวเองมายันหนักแน่นกว่าการอ้างเปเปอร์อย่างเดียว
+
+เพิ่ม `segment_canny()` และ `segment_sobel()` ใน `segmentation.py` และ `--method canny|sobel`
+ทั่วทั้ง pipeline โดยใช้ parameter schema เดียวกัน (`canny_lo` / `canny_hi` เพิ่มเข้า `KEYS`
+ส่วน method อื่นตั้งเป็น 0)
+
+**ข้อควรรู้เรื่อง Canny:** มันหา**ขอบ**ของรอยร้าว ไม่ใช่ตัวรอยร้าว รอยร้าวหนึ่งเส้นจึงออกมาเป็น
+เส้นคู่ขนานสองเส้นที่มีช่องว่างตรงกลาง ต้องพึ่ง closing มาเชื่อมกลับ แต่ถ้า closing แรงไปก็พัง:
+บนผิวถนนที่มี texture Canny ที่ threshold ต่ำจุดติดประมาณ **27% ของพิกเซลทั้งภาพ** แล้ว
+closing kernel 7 จะหลอมทุกอย่างเป็นก้อนเดียวกินพื้นที่ 75% ของภาพ ซึ่ง shape filter ตัดทิ้งทั้งก้อน
+ได้ Dice 0.0000 (รอบแรกที่ผมตั้ง grid ผิดก็เจอแบบนี้ทั้งกระดาน)
+
+ช่วงที่ใช้ได้จริงคือ **edge map ที่เบาบาง + kernel เล็ก** จึงจูน 2 รอบ (864 + 432 combinations)
+จนค่าที่ชนะไม่ชนขอบ
+
+> หมายเหตุ: ค่าที่ชนะออกมาเป็น `canny_lo = 200, canny_hi = 150` ซึ่งดูสลับกัน — ตรวจแล้วว่า
+> `cv2.Canny(g, 200, 150)` ให้ผลเท่ากับ `cv2.Canny(g, 150, 200)` ทุกพิกเซล OpenCV ใช้ค่าน้อย
+> เป็น hysteresis low เอง ลำดับใน grid จึงไม่มีผล
+
+**Sobel** ใช้ gradient magnitude แล้ว threshold (`canny_lo = 0` หมายถึงใช้ Otsu บน magnitude)
+จูน 432 combinations
+
+### 3. ผลเปรียบเทียบ 4 วิธี (protocol เดียวกันทั้งหมด เปิดครบ 4 step)
+
+| Method | Held-out Dice | 118 ภาพ macro | 118 ภาพ micro | Dice >= 0.5 | Dice < 0.2 | ชนะขาด (จาก 118) |
+|---|---|---|---|---|---|---|
+| **Adaptive** | **0.5068** | **0.4991** | **0.4708** | **68** | **9** | **108** |
+| Sobel | 0.3180 | 0.2956 | 0.2768 | 12 | 38 | 7 |
+| Canny | 0.2278 | 0.2127 | 0.1959 | 7 | 64 | 3 |
+| Otsu | 0.2262 | 0.2433 | 0.2612 | 8 | 41 | 1 |
+
+**Adaptive ชนะขาด 108 จาก 118 ภาพ** และดีกว่าอันดับสอง (Sobel) ประมาณ 1.6 เท่า
+
+**False positive เทียบกัน** (จาก confusion matrix): adaptive 157,115 / Sobel 334,623 /
+Canny 476,609 / Otsu 394,732 พิกเซล — ทุก baseline ทายเกินหมด
+
+**อธิบาย:** Canny กับ Sobel ตอบสนองต่อ**การเปลี่ยนความสว่างอย่างฉับพลัน** ซึ่งบนผิวถนน
+มีเต็มไปหมดจาก texture ของยางมะตอย ขอบคราบ และเงา — ทั้งหมดนี้มี gradient แรงพอๆ กับ
+ขอบรอยร้าว ขณะที่ adaptive thresholding ถามคำถามที่ตรงกว่าคือ "พิกเซลนี้**มืดกว่า**เพื่อนบ้าน
+หรือเปล่า" ซึ่งรอยร้าวตอบว่าใช่ แต่ texture ที่สว่าง-มืดสลับกันตอบว่าไม่
+
+สังเกตว่า Sobel ชนะ Canny — เพราะ Canny มีขั้น non-maximum suppression + hysteresis
+ที่ทำให้ได้เส้นขอบบาง 1 พิกเซล ซึ่งยิ่งทำให้ปัญหา "เส้นคู่ขนานรอบรอยร้าว" ชัดขึ้น
+ส่วน Sobel ให้แถบ gradient ที่หนากว่า จึงบังเอิญทับตัวรอยร้าวได้มากกว่า
+
+**เปเปอร์ที่ควรโหลดมาใส่ `relatedWork/`** (ยังไม่ได้โหลด — ทีมต้องไปดึง PDF เอง
+และควรอ่านยืนยันเนื้อหาก่อนอ้างอิง):
+
+- Han et al. (2021), *An Advanced Otsu Method Integrated with Edge Detection and Decision
+  Tree for Crack Detection in Highway Transportation Infrastructure*, Advances in Materials
+  Science and Engineering — https://onlinelibrary.wiley.com/doi/10.1155/2021/9205509
+- *A review of the progress in machine vision-based crack detection and identification
+  technology for asphalt pavements* — https://www.maxapress.com/article/doi/10.48130/dts-0025-0006
+- *Pavement crack detection using Otsu thresholding for image segmentation* —
+  https://www.researchgate.net/publication/326266041
+
+### 4. รูปสำหรับรายงาน — `src/make_figures.py`
+
+- `--images 021 065 042 023` สร้างแผง 1 แถวต่อภาพ: ต้นฉบับ / ground truth / ผลทำนาย / overlay
+  พร้อม Dice, P, R บนหัวรูป ได้ `outputs/figures/failure_cases.png`
+- `--compare 001 023 065 --methods adaptive otsu canny sobel` เทียบ 4 วิธีบนภาพเดียวกัน
+  ได้ `outputs/figures/method_comparison.png`
+
+### 5. สิ่งที่รูป failure case เปิดโปง: **ปัญหาอยู่ที่ step 4 ไม่ใช่ step 2**
+
+ภาพ 065 ได้ mask ว่างเปล่าทั้งที่รอยร้าวเห็นชัดด้วยตาเปล่า ไล่ดูทีละ stage:
+
+| Stage | ภาพ 065 |
+|---|---|
+| หลัง segmentation | 31,960 พิกเซล, 1,514 components |
+| หลัง morphology | 26,783 พิกเซล, 878 components, ก้อนใหญ่สุด **4,898 พิกเซล** |
+| หลัง shape filter | **0 พิกเซล** |
+
+**segmentation เจอรอยร้าวแล้ว แต่ step 4 ตัดทิ้งหมด** เหลือ 19 components ที่ผ่านเกณฑ์
+พื้นที่ และทั้ง 19 ตัวตกเกณฑ์ aspect ratio
+
+**สาเหตุ:** `min_aspect` วัดจาก `cv2.minAreaRect` ซึ่งเป็นสี่เหลี่ยมหมุนได้ที่ครอบ contour
+รอยร้าวที่**โค้งหรือแตกแขนง** (เช่น 065 ที่เป็นรูปตัว T, 021 ที่แตกเป็นกิ่ง) จะมีกรอบครอบ
+เกือบเป็นสี่เหลี่ยมจัตุรัส ทำให้ aspect ใกล้ 1 แล้วถูกตัดทิ้งทั้งที่มันเรียวมาก
+เกณฑ์นี้ตั้งอยู่บนสมมติฐานว่ารอยร้าวเป็น**เส้นตรง** ซึ่งไม่จริง
+
+**วัดผลกระทบทั้ง dataset:**
+
+| | พิกเซล |
+|---|---|
+| พิกเซลรอยร้าวจริงที่ step 1-3 หาเจอแล้ว | 253,179 |
+| step 4 เก็บไว้ | 175,950 |
+| **step 4 ตัดทิ้ง** | **77,229 (30.5%)** |
+
+- micro-recall ตอนนี้ **0.4246** ถ้า step 4 ไม่ตัดอะไรเลยจะเป็น **0.6109**
+- มี **24 จาก 118 ภาพ** ที่ step 4 ตัดทิ้งเกินครึ่งของสิ่งที่หาเจอ
+- ภาพที่โดนหนักสุดคือ failure case ทั้งหมดพอดี: 021 (ตัดทิ้ง 100%), 065 (100%),
+  042 (98.3%), 023 (96.8%), 052 (85.4%), 084 (83.0%)
+
+อธิบายได้ทันทีว่าทำไม variant A (ปิด aspect filter) ถึงชนะในตาราง ablation และทำไม
+`min_aspect` ถึงวิ่งไปชนค่าต่ำสุดของ grid ทุกครั้งที่จูน
+
+**ข้อเสนอ (ยังไม่ได้ทำ):** เปลี่ยนตัววัดความเรียวจาก aspect ratio ของกรอบสี่เหลี่ยม
+ไปเป็นค่าที่ไม่ขึ้นกับความโค้ง เช่น
+
+- **thinness / circularity** = `4*pi*area / perimeter^2` (รอยร้าวเรียวยาวได้ค่าต่ำไม่ว่าจะโค้งแค่ไหน)
+- หรืออัตราส่วน **ความยาว skeleton ต่อพื้นที่**
+
+วิธีนี้ยังคง step 4 ไว้ครบตามโครงสร้างโปรเจกต์ แต่แก้ที่ต้นเหตุจริง และน่าจะดึง
+failure case กลับมาได้หลายภาพ
+
+> **หมายเหตุเพิ่มเติม:** `filter_shapes()` ใช้ `cv2.contourArea()` ซึ่งคือพื้นที่ของรูปหลายเหลี่ยม
+> ที่ contour ล้อมไว้ **ไม่ใช่จำนวนพิกเซลจริงของ blob** สำหรับโครงสร้างบางๆ สองค่านี้
+> ต่างกันมาก (เช่น 065: connected components นับได้ 36 ก้อนที่มีขนาด 80 พิกเซลขึ้นไป แต่
+> `contourArea` ผ่านเกณฑ์แค่ 19 ก้อน) ควรเปลี่ยนไปใช้จำนวนพิกเซลจาก
+> `connectedComponentsWithStats` ด้วย
+
+### 6. แก้ไฟล์ที่อ้างถึงภาพที่ถูกลบไปแล้ว
+
+ตกค้างจากการลบภาพสังเคราะห์ `sample` เมื่อ 14 ก.ย.:
+
+- `notebooks/demo.ipynb` cell สุดท้ายอ่าน `masks/sample.png` เปลี่ยนเป็น `masks/005.png`
+  (มี `if gt is not None` ครอบไว้จึงไม่ error แต่เงียบไปเฉยๆ ไม่แสดงผลอะไรเลย)
+- `README.md` และ docstring ของ `main.py` ยังบอกให้รัน `--input data/raw/images/sample.jpg`
+  ซึ่งไม่มีไฟล์แล้ว เปลี่ยนเป็น `001.jpg` และอัปเดตตัวอย่างให้ครอบคลุม `--params` / `--confusion`
+
+### Reproduce
+
+```powershell
+# step 1: จูนและ ablate pre-processing (พร้อมเช็ค bias ด้วย --joint)
+python src\tune_preprocess.py --csv outputs\tune_results_preprocess.csv
+python src\tune_preprocess.py --joint outputs\tune_results_round2.csv --joint-top 5 --variant full
+
+# edge-based baselines
+python src\tune.py --subset 0 --holdout 0.5 --method canny --csv outputs\tune_results_canny.csv
+python src\tune.py --subset 0 --holdout 0.5 --method sobel --csv outputs\tune_results_sobel.csv
+python src\select_params.py --results outputs\tune_results_canny.csv --method canny --variant full --out outputs\tuned_params_canny.json --apply
+python src\select_params.py --results outputs\tune_results_sobel.csv --method sobel --variant full --out outputs\tuned_params_sobel.json --apply
+
+# รูปสำหรับรายงาน
+python src\make_figures.py --images 021 065 042 023 --out outputs\figures\failure_cases.png
+python src\make_figures.py --compare 001 023 065 --out outputs\figures\method_comparison.png
+```
+
+## งานถัดไป (อัปเดต 2026-09-20)
+
+- [x] ขยาย GRID / แยก train-test / เลือกค่าแบบ fold-stable
+- [x] เทียบกับ Otsu + confusion matrix
+- [x] จูนและ ablate pre-processing (step 1)
+- [x] Edge-based baselines (Canny, Sobel)
+- [x] รูป failure case + แก้ไฟล์ที่อ้างถึง sample
+- [ ] **แก้เกณฑ์ความเรียวใน step 4** (ดูหัวข้อ 5) น่าจะเป็นงานที่ให้ผลตอบแทนสูงสุดที่เหลืออยู่
+- [ ] โหลด PDF เปเปอร์ edge-based ใส่ `relatedWork/`
+- [ ] วัดเวลาประมวลผลต่อภาพ เพื่อรองรับข้อ 8 ของโจทย์ (ต่อยอดไป ESP32 / FPGA / โดรน)
+- [ ] **เขียนรายงาน**
+- [ ] merge branch `tuning-round-1` เข้า `main`

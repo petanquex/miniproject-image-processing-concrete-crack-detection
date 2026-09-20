@@ -19,12 +19,18 @@ from shape_filter import filter_shapes
 # cracks, ~480x320): a larger threshold window + stricter C favor precision,
 # and a stronger opening + area/aspect filter drop background speckle.
 DEFAULT_PARAMS = {
+    "blur_ksize": 5,
+    "clip_limit": 2.0,
+    "tile": 8,
     "block_size": 51,
     "C": 12,
     "close_ksize": 5,
     "open_ksize": 5,
     "min_area": 120,
     "min_aspect": 3.0,
+    # only used by the edge-based baselines (method=canny / sobel)
+    "canny_lo": 50,
+    "canny_hi": 150,
 }
 
 _TUNED_PATH = os.path.join(
@@ -54,9 +60,13 @@ def detect_cracks(image, method="adaptive", params=None, return_stages=False):
     """
     p = load_params(params)
 
-    gray = preprocess(image)
+    gray = preprocess(image, blur_ksize=p["blur_ksize"],
+                      clip_limit=p["clip_limit"], tile=p["tile"])
     if method == "adaptive":
         seg = segment_adaptive(gray, block_size=p["block_size"], C=p["C"])
+    elif method in ("canny", "sobel"):
+        seg = segment(gray, method=method,
+                      canny_lo=p["canny_lo"], canny_hi=p["canny_hi"])
     else:
         seg = segment(gray, method=method)
     morph = apply_morphology(seg, p["close_ksize"], p["open_ksize"])

@@ -37,7 +37,8 @@ from tune import load_pairs, split_pairs, load_stage, KEYS, run_per_image  # noq
 from evaluate import average_metrics  # noqa: E402
 
 CAST = {"block_size": int, "C": int, "close_ksize": int,
-        "open_ksize": int, "min_area": int, "min_aspect": float}
+        "open_ksize": int, "min_area": int, "min_aspect": float,
+        "canny_lo": int, "canny_hi": int}
 
 VARIANTS = {
     "any":   lambda p: True,
@@ -54,7 +55,9 @@ def read_results(paths):
     for path in paths:
         with open(path, newline="") as f:
             for row in csv.DictReader(f):
-                key = tuple(CAST[k](row[k]) for k in KEYS)
+                # CSVs written before the edge baselines existed have no
+                # canny columns; treat them as 0 (unused).
+                key = tuple(CAST[k](row.get(k) or 0) for k in KEYS)
                 combos[key] = max(combos.get(key, 0.0), float(row["dice"]))
     return combos
 
@@ -74,7 +77,8 @@ def main():
     ap.add_argument("--masks", default="data/raw/masks")
     ap.add_argument("--holdout", type=float, default=0.5,
                     help="must match the tune.py run that produced the CSVs")
-    ap.add_argument("--method", default="adaptive", choices=["adaptive", "otsu"],
+    ap.add_argument("--method", default="adaptive",
+                    choices=["adaptive", "otsu", "canny", "sobel"],
                     help="must match the tune.py run that produced the CSVs")
     ap.add_argument("--variant", default="any", choices=sorted(VARIANTS))
     ap.add_argument("--shortlist", type=int, default=300)

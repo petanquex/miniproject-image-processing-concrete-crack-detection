@@ -4,13 +4,13 @@ main.py  —  Command-line entry point for the crack-detection pipeline.
 Examples
 --------
 # One image, save the mask + overlay to outputs/figures/
-python main.py --input data/raw/images/sample.jpg
+python main.py --input data/raw/images/001.jpg
 
 # A whole folder, and evaluate against ground-truth masks
 python main.py --input data/raw/images --gt data/raw/masks --csv outputs/metrics.csv
 
-# Use global Otsu instead of adaptive thresholding
-python main.py --input data/raw/images/sample.jpg --method otsu
+# Score a baseline without disturbing the shipped parameters
+python main.py --input data/raw/images --gt data/raw/masks --method otsu     --params outputs/tuned_params_otsu.json --csv outputs/metrics_otsu.csv
 """
 import argparse
 import csv
@@ -56,7 +56,7 @@ def main():
     ap.add_argument("--input", required=True, help="image file or folder")
     ap.add_argument("--gt", default=None, help="ground-truth mask folder")
     ap.add_argument("--method", default="adaptive",
-                    choices=["adaptive", "otsu"])
+                    choices=["adaptive", "otsu", "canny", "sobel"])
     ap.add_argument("--outdir", default="data/results")
     ap.add_argument("--figdir", default="outputs/figures")
     ap.add_argument("--csv", default=None, help="write metrics to this CSV")

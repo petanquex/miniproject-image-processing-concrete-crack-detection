@@ -29,7 +29,7 @@ import numpy as np
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from preprocessing import preprocess          # noqa: E402
-from segmentation import segment_adaptive, segment_otsu  # noqa: E402
+from segmentation import segment, segment_adaptive, segment_otsu  # noqa: E402
 from morphology import apply_morphology         # noqa: E402
 from shape_filter import filter_shapes          # noqa: E402
 from evaluate import pixel_metrics, average_metrics  # noqa: E402
@@ -45,6 +45,10 @@ GRID = {
     "open_ksize": [1, 3],
     "min_area":   [10, 20, 35, 50, 80],
     "min_aspect": [1.5, 2.0, 3.0, 4.0],
+    # unused by adaptive thresholding; present so every method shares one
+    # parameter schema and one results-CSV format
+    "canny_lo":   [0],
+    "canny_hi":   [0],
 }
 
 # Otsu picks one global threshold from the histogram: it has no window size and
@@ -58,13 +62,46 @@ GRID_OTSU = {
     "open_ksize": [1, 3],
     "min_area":   [10, 20, 35, 50, 80, 120],
     "min_aspect": [1.0, 1.5, 2.0, 3.0, 4.0],
+    "canny_lo":   [0],
+    "canny_hi":   [0],
+}
+
+# Edge-based baselines. Canny marks the two sides of a crack rather than its
+# body, so some closing is needed to merge them - but only a little: on
+# textured pavement Canny fires on ~27% of the pixels, and a closing kernel of
+# 7 fuses all of it into one blob covering 75% of the image, which the shape
+# filter then throws away whole (Dice 0). Low Canny thresholds do the same, so
+# the useful range is a sparse edge map plus a small kernel.
+GRID_CANNY = {
+    "block_size": [0],
+    "C":          [0],
+    "close_ksize":[1, 3, 5],
+    "open_ksize": [1, 3],
+    "min_area":   [20, 50, 120, 250],
+    "min_aspect": [2.0, 3.0, 4.0],
+    "canny_lo":   [80, 120, 160, 200],
+    "canny_hi":   [150, 200, 250],
+}
+
+# For Sobel, canny_lo is the threshold on the gradient magnitude and 0 means
+# "use Otsu on the magnitude"; canny_hi is unused.
+GRID_SOBEL = {
+    "block_size": [0],
+    "C":          [0],
+    "close_ksize":[1, 3, 5],
+    "open_ksize": [1, 3],
+    "min_area":   [20, 50, 120, 250],
+    "min_aspect": [2.0, 3.0, 4.0],
+    "canny_lo":   [0, 60, 90, 120, 150, 180],
+    "canny_hi":   [0],
 }
 
 KEYS = list(GRID.keys())
 
 
 def grid_for(method):
-    return GRID_OTSU if method == "otsu" else GRID
+    return {"otsu": GRID_OTSU, "canny": GRID_CANNY,
+            "sobel": GRID_SOBEL}.get(method, GRID)
 
 
 def load_pairs(img_dir, mask_dir, subset):
@@ -113,6 +150,9 @@ def run_per_image(pre_grays, gts, p, method="adaptive"):
     for gray, gt in zip(pre_grays, gts):
         if method == "otsu":
             seg = segment_otsu(gray)
+        elif method in ("canny", "sobel"):
+            seg = segment(gray, method=method,
+                          canny_lo=p["canny_lo"], canny_hi=p["canny_hi"])
         else:
             seg = segment_adaptive(gray, block_size=p["block_size"], C=p["C"])
         morph = apply_morphology(seg, p["close_ksize"], p["open_ksize"])
@@ -136,7 +176,7 @@ def main():
                          "only to score the winner (0 = no split)")
     ap.add_argument("--apply", action="store_true",
                     help="write best params to outputs/tuned_params.json")
-    ap.add_argument("--method", default="adaptive", choices=["adaptive", "otsu"],
+    ap.add_argument("--method", default="adaptive", choices=["adaptive", "otsu", "canny", "sobel"],
                     help="which segmentation step to search over")
     ap.add_argument("--top", type=int, default=8)
     ap.add_argument("--csv", default=None,
