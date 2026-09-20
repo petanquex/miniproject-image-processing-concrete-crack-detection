@@ -38,14 +38,27 @@ from evaluate import average_metrics  # noqa: E402
 
 CAST = {"block_size": int, "C": int, "close_ksize": int,
         "open_ksize": int, "min_area": int, "min_aspect": float,
-        "canny_lo": int, "canny_hi": int}
+        "canny_lo": int, "canny_hi": int, "max_circ": float}
+
+# Values for columns that a CSV written by an older version does not have.
+# These must be the "criterion switched off" value, not zero: max_circ = 0
+# would reject every component instead of disabling the test.
+MISSING = {"canny_lo": 0, "canny_hi": 0, "max_circ": 1.0}
 
 VARIANTS = {
     "any":   lambda p: True,
     "morph": lambda p: p["close_ksize"] >= 3 and p["open_ksize"] >= 3,
-    "shape": lambda p: p["min_aspect"] >= 2.0,
+    "shape": lambda p: p["min_aspect"] >= 2.0 or p["max_circ"] < 1.0,
     "full":  lambda p: (p["close_ksize"] >= 3 and p["open_ksize"] >= 3
-                        and p["min_aspect"] >= 2.0),
+                        and (p["min_aspect"] >= 2.0 or p["max_circ"] < 1.0)),
+    # All four steps active, but forcing step 4 to use one shape criterion or
+    # the other - a head-to-head of the old and new elongation tests.
+    "full_aspect": lambda p: (p["close_ksize"] >= 3 and p["open_ksize"] >= 3
+                              and p["min_aspect"] >= 2.0
+                              and p["max_circ"] >= 1.0),
+    "full_circ":   lambda p: (p["close_ksize"] >= 3 and p["open_ksize"] >= 3
+                              and p["min_aspect"] <= 1.0
+                              and p["max_circ"] < 1.0),
 }
 
 
@@ -57,7 +70,8 @@ def read_results(paths):
             for row in csv.DictReader(f):
                 # CSVs written before the edge baselines existed have no
                 # canny columns; treat them as 0 (unused).
-                key = tuple(CAST[k](row.get(k) or 0) for k in KEYS)
+                key = tuple(CAST[k](row[k]) if row.get(k) not in (None, "")
+                            else CAST[k](MISSING.get(k, 0)) for k in KEYS)
                 combos[key] = max(combos.get(key, 0.0), float(row["dice"]))
     return combos
 

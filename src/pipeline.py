@@ -28,6 +28,9 @@ DEFAULT_PARAMS = {
     "open_ksize": 5,
     "min_area": 120,
     "min_aspect": 3.0,
+    # circularity 4*pi*A/P^2; 1.0 disables the test, lower keeps only thin
+    # shapes regardless of how much they curve
+    "max_circ": 1.0,
     # only used by the edge-based baselines (method=canny / sobel)
     "canny_lo": 50,
     "canny_hi": 150,
@@ -70,7 +73,8 @@ def detect_cracks(image, method="adaptive", params=None, return_stages=False):
     else:
         seg = segment(gray, method=method)
     morph = apply_morphology(seg, p["close_ksize"], p["open_ksize"])
-    mask = filter_shapes(morph, p["min_area"], p["min_aspect"])
+    mask = filter_shapes(morph, p["min_area"], p["min_aspect"],
+                         p["max_circ"])
 
     if return_stages:
         stages = {

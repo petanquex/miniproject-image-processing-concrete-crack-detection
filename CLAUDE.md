@@ -16,7 +16,8 @@ a proposal deck, and a report.
 2. **Segmentation** (`src/segmentation.py`) — Adaptive Thresholding (default); Otsu,
    Canny and Sobel are implemented as comparison baselines → binary mask
 3. **Morphological filtering** (`src/morphology.py`) — Closing reconnects cracks, Opening removes noise
-4. **Shape analysis** (`src/shape_filter.py`) — keep thin/long contours (area + aspect ratio), drop round pores/stains
+4. **Shape analysis** (`src/shape_filter.py`) — keep thin contours by pixel area and
+   circularity (curvature-independent), drop round pores/stains
 
 `src/pipeline.py` chains all four. `src/evaluate.py` builds the pixel-level **confusion matrix** (TP/FP/FN/TN) and derives
 Precision, Recall, IoU (Jaccard), Dice (F1), reported both macro (mean of per-image
@@ -82,92 +83,88 @@ converts these to 0/255 PNG masks in `data/raw/masks/`.
 
 ## Current status
 
-Tuning, the method comparison and the step-1 ablation are done (2026-09-20). Full log,
-all tables and the failure-case analysis: `docs/Tuning Journal.md`.
+Three tuning rounds, the four-method comparison, the step-1 ablation and the step-4
+rewrite are done (2026-09-20). Full log and every table: `docs/Tuning Journal.md`.
 
 Shipped parameters (`outputs/tuned_params.json`):
-`blur_ksize=5, clip_limit=2.0, tile=8, block_size=51, C=15, close_ksize=3, open_ksize=3,
-min_area=80, min_aspect=3.0`
+`blur_ksize=5, clip_limit=2.0, tile=8, block_size=35, C=15, close_ksize=3,
+open_ksize=3, min_area=120, min_aspect=1.0, max_circ=0.4`
 
 Mean pixel-level metrics on the 118 real CrackForest images:
 
-| Metric    | Baseline (`723e49d`) | Round 1 | **Current** |
-|-----------|----------------------|---------|-------------|
-| Precision | 0.2479               | 0.5349  | 0.4990      |
-| Recall    | 0.5982               | 0.5194  | **0.5781**  |
-| IoU       | 0.2051               | 0.3399  | **0.3492**  |
-| Dice      | 0.3201               | 0.4872  | **0.4991**  |
+| Metric    | Baseline (`723e49d`) | Round 1 | Round 2 | **Current** |
+|-----------|----------------------|---------|---------|-------------|
+| Precision | 0.2479               | 0.5349  | 0.4990  | **0.5273**  |
+| Recall    | 0.5982               | 0.5194  | 0.5781  | 0.5732      |
+| IoU       | 0.2051               | 0.3399  | 0.3492  | **0.3533**  |
+| Dice      | 0.3201               | 0.4872  | 0.4991  | **0.5024**  |
 
-Parameters are selected on 59 training images and scored once on the 59 held-out
-images: **Dice 0.5068 / IoU 0.3546** there, so the number is not fitted to its own
-test set (round 1's train/test gap was 0.040; this is 0.001).
+Parameters are selected on 59 training images and scored once on the 59 held out of
+every search: **Dice 0.5105 / IoU 0.3606** there.
 
-**Method comparison** — every method gets its own grid search under the identical
-protocol, all four pipeline steps active:
+**Step 4 was measuring the wrong thing.** It used the aspect ratio of
+`cv2.minAreaRect`, which assumes a crack is straight — a curved or branching crack has
+a near-square bounding box and was discarded whole, which is why `min_aspect` ran to
+the bottom of every grid. `filter_shapes()` now uses circularity
+(`4*pi*area/perimeter^2`), near 0 for anything thin however much it bends, and takes
+area as the true pixel count from `connectedComponentsWithStats` rather than
+`cv2.contourArea` (polygon area, which under-measures thin shapes). Best train Dice by
+criterion: **circularity 0.5243, no shape test 0.5201, both 0.5030, aspect 0.4997** —
+the old criterion was worse than not filtering by shape at all, the new one is better,
+so step 4 earns its place for the first time. Step 4 now discards 20.2% of the crack
+pixels the earlier steps found, down from 30.5%; 065 went 0.0000 -> 0.5844, 021
+0.0000 -> 0.3632, 084 0.1878 -> 0.4976. It is a trade, not a free win: 63 images
+improved and 55 got worse (072, 105 and 049 regressed noticeably).
 
-| Method       | Held-out Dice | All 118 (macro) | All 118 (micro) | Wins outright |
-|--------------|---------------|-----------------|-----------------|---------------|
-| **Adaptive** | **0.5068**    | **0.4991**      | **0.4708**      | **108 / 118** |
-| Sobel        | 0.3180        | 0.2956          | 0.2768          | 7             |
-| Canny        | 0.2278        | 0.2127          | 0.1959          | 3             |
-| Otsu         | 0.2262        | 0.2433          | 0.2612          | 1             |
+**Method comparison** — each method gets its own grid search under the identical
+protocol, all four steps active:
 
-Edge operators fire on asphalt texture, stain borders and shadows just as strongly as
-on crack edges; adaptive thresholding asks the more specific question ("is this pixel
-darker than its neighbourhood?"). Baseline parameters live in
+| Method       | Held-out Dice | All 118 (macro) | Wins outright | False positives |
+|--------------|---------------|-----------------|---------------|-----------------|
+| **Adaptive** | **0.5105**    | **0.5024**      | **102 / 118** | **171,802**     |
+| Sobel        | 0.3159        | 0.2927          | 8             | 463,628         |
+| Otsu         | 0.2257        | 0.2428          | 5             | 392,289         |
+| Canny        | 0.2237        | 0.2107          | 3             | 1,457,995       |
+
+Edge operators fire on asphalt texture, stain borders and shadows as strongly as on
+crack edges; adaptive thresholding asks the more specific question ("is this pixel
+darker than its neighbourhood?"). All three baselines turn circularity *off* when
+offered it — their masks are blobs, not thin structures, so a thinness test cannot
+separate signal from noise there. Baseline parameters are in
 `outputs/tuned_params_<method>.json`; `main.py --params <file>` scores one without
 touching the shipped configuration.
 
 **Accuracy is a trap** — crack pixels are 2.29% of the dataset, so predicting "no crack"
-everywhere scores ~0.977. Adaptive scores 0.9782 and Otsu 0.9621 while their Dice differs
-by 2x. Report IoU and Dice.
+everywhere scores ~0.977. Adaptive scores 0.9776 and Otsu 0.9621 while their Dice
+differs by 2x. Report IoU and Dice.
 
-**Step ablation** (held-out Dice unless noted). Left unconstrained the search switches
-morphology and the aspect filter off; the shipped configuration deliberately keeps all
-four steps, which costs 0.0145:
+**Step ablations.** Step 1 (`src/tune_preprocess.py`, mean Dice on training folds): both
+on 0.4929, CLAHE only 0.4197, neither 0.2699, blur only 0.2306 — CLAHE carries the step,
+and blur *without* CLAHE is worse than doing nothing. Steps 2-4 (`--variant`, held-out
+Dice): unconstrained 0.5174, all four steps on 0.5105. The shipped configuration keeps
+every step active, which now costs 0.007.
 
-| Variant                      | Dice       |
-|------------------------------|------------|
-| unconstrained                | 0.5213     |
-| morphology forced on         | 0.5003     |
-| aspect filter forced on      | 0.5142     |
-| **all 4 steps on (shipped)** | **0.5068** |
-
-Step 1 was ablated separately (`src/tune_preprocess.py`, mean Dice on the training
-folds): both on 0.4929, CLAHE only 0.4197, neither 0.2699, blur only 0.2306. CLAHE
-carries the step; blur *without* CLAHE is worse than doing nothing, because it smears
-out thin cracks and nothing restores their contrast. The day-one defaults turned out to
-be the best setting, and re-optimising steps 2-4 for each alternative keeps every
-candidate within 0.005 Dice — pre-processing is not a sensitive knob here.
-
-**Known defect, highest-value work left.** `filter_shapes()` measures elongation with
-`cv2.minAreaRect`, which assumes a crack is straight. A curved or branching crack has a
-near-square bounding box, so it is discarded whole: across the dataset step 4 throws
-away **30.5% of the true crack pixels steps 1-3 had already found** (micro-recall 0.4246,
-versus 0.6109 if it discarded nothing), and it accounts for every failure case - it
-discards 100% of what was found on 021 and 065. A curvature-independent measure
-(thinness `4*pi*area/perimeter^2`, or skeleton length over area) should replace it.
-Separately, `cv2.contourArea()` measures enclosed polygon area rather than blob pixel
-count, which under-measures exactly the thin shapes the filter is meant to keep;
-`connectedComponentsWithStats` gives the true count.
+**Some remaining failures are ground-truth artefacts, not detection errors.** On 021 the
+pipeline finds the crazing in the painted road line — real cracks that CrackForest does
+not annotate — so precision reads 0.239. On 084 the annotation is drawn far thicker than
+the crack, capping recall at 0.383 while precision is 0.711. Worth saying in the report:
+a pixel-level metric punishes finding what the annotator did not draw, and the stroke
+width of the ground truth directly bounds recall.
 
 Reproduce:
 ```powershell
-python src\tune.py --subset 0 --holdout 0.5 --csv outputs\tune_results_round2.csv
-python src\select_params.py --results outputs\tune_results_round2.csv --variant full --apply
-python main.py --input data\raw\images --gt data\raw\masks --csv outputs\metrics.csv --confusion outputs\confusion.txt
+python src\tune.py --subset 0 --holdout 0.5 --csv outputs\tune_results_round3.csv
+python src\select_params.py --results outputs\tune_results_round3.csv --variant full --apply
+python main.py --input data\raw\images --gt data\raw\masks --csv outputs\metrics.csv --confusion outputs\confusion_adaptive.txt
 ```
 
 ## Next work
 
-- **Fix the elongation criterion in step 4** (see above) — the largest remaining win.
-- **Write the report** — no report file exists yet. `docs/Tuning Journal.md` has the
-  material: before/after tables, the step ablations, the four-method comparison,
-  confusion matrices and failure cases. Figures: `src/make_figures.py`.
-- Download the edge-based papers cited in the journal into `relatedWork/` — the brief's
-  section 4 wants the literature review to justify threshold-based over edge-based, and
-  only the Dorafshan PDF is there.
+- **Write the report** — the largest remaining task; no report file exists yet.
+  `docs/Tuning Journal.md` holds the material and `src/make_figures.py` the figures.
+- Read the papers now in `relatedWork/` and write the literature review around them.
 - Measure per-image runtime to support the brief's section 8 (ESP32 / FPGA / drone).
+- Look at 072, 105 and 049, which regressed when step 4 changed.
 - Merge the `tuning-round-1` branch into `main`.
 
 ## Conventions

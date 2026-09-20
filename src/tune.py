@@ -38,13 +38,18 @@ from evaluate import pixel_metrics, average_metrics  # noqa: E402
 # Round 2: the round-1 best sat on the edge of the old grid (C at the maximum,
 # kernels and min_area at the minimum), so every edge is pushed outwards here.
 # ksize = 1 means "skip this morphological step" (a 1x1 kernel is a no-op).
+# Round 3: min_area is now a true pixel count rather than cv2.contourArea, so
+# the useful range shifted upwards. min_aspect is kept only as the "old way" so
+# the two shape criteria can be compared inside one search; max_circ = 1.0
+# disables circularity and min_aspect = 1.0 disables the aspect test.
 GRID = {
-    "block_size": [15, 25, 35, 51, 75],
-    "C":          [10, 12, 15, 18, 21, 25],
+    "block_size": [25, 35, 51, 75],
+    "C":          [10, 12, 15, 18, 21],
     "close_ksize":[1, 3, 5],
     "open_ksize": [1, 3],
-    "min_area":   [10, 20, 35, 50, 80],
-    "min_aspect": [1.5, 2.0, 3.0, 4.0],
+    "min_area":   [50, 120, 250, 400],
+    "min_aspect": [1.0, 3.0],
+    "max_circ":   [0.05, 0.10, 0.20, 0.40, 1.0],
     # unused by adaptive thresholding; present so every method shares one
     # parameter schema and one results-CSV format
     "canny_lo":   [0],
@@ -64,6 +69,7 @@ GRID_OTSU = {
     "min_aspect": [1.0, 1.5, 2.0, 3.0, 4.0],
     "canny_lo":   [0],
     "canny_hi":   [0],
+    "max_circ":   [1.0],
 }
 
 # Edge-based baselines. Canny marks the two sides of a crack rather than its
@@ -81,6 +87,7 @@ GRID_CANNY = {
     "min_aspect": [2.0, 3.0, 4.0],
     "canny_lo":   [80, 120, 160, 200],
     "canny_hi":   [150, 200, 250],
+    "max_circ":   [1.0],
 }
 
 # For Sobel, canny_lo is the threshold on the gradient magnitude and 0 means
@@ -94,6 +101,7 @@ GRID_SOBEL = {
     "min_aspect": [2.0, 3.0, 4.0],
     "canny_lo":   [0, 60, 90, 120, 150, 180],
     "canny_hi":   [0],
+    "max_circ":   [1.0],
 }
 
 KEYS = list(GRID.keys())
@@ -156,7 +164,8 @@ def run_per_image(pre_grays, gts, p, method="adaptive"):
         else:
             seg = segment_adaptive(gray, block_size=p["block_size"], C=p["C"])
         morph = apply_morphology(seg, p["close_ksize"], p["open_ksize"])
-        mask = filter_shapes(morph, p["min_area"], p["min_aspect"])
+        mask = filter_shapes(morph, p["min_area"], p["min_aspect"],
+                             p["max_circ"])
         metrics.append(pixel_metrics(mask, gt))
     return metrics
 
