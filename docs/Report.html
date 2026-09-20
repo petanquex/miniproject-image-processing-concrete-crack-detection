@@ -1,0 +1,763 @@
+<title>Concrete Crack Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#EFF1F2; --surface:#FFFFFF; --surface-2:#F6F8F9; --surface-3:#E7EBEE;
+  --ink:#14171A; --ink-2:#555D65; --ink-3:#7C858D;
+  --line:#D4D9DD; --line-strong:#B6BEC5;
+  --accent:#B5372C; --accent-soft:#F2DEDB;
+  --data:#2E5E8E; --data-2:#A9C3DA; --data-3:#DCE6EF;
+  --good:#2C7A52; --warn:#9A6B15;
+  --shadow:0 1px 2px rgba(20,23,26,.05), 0 8px 24px -16px rgba(20,23,26,.22);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#111417; --surface:#181B1F; --surface-2:#1E2227; --surface-3:#252A30;
+    --ink:#E9ECEE; --ink-2:#9AA3AB; --ink-3:#7A838B;
+    --line:#2A2F35; --line-strong:#3A4148;
+    --accent:#E8705F; --accent-soft:#3A2320;
+    --data:#82B2E2; --data-2:#3E6187; --data-3:#28323D;
+    --good:#5CB585; --warn:#D3A24B;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111417; --surface:#181B1F; --surface-2:#1E2227; --surface-3:#252A30;
+  --ink:#E9ECEE; --ink-2:#9AA3AB; --ink-3:#7A838B;
+  --line:#2A2F35; --line-strong:#3A4148;
+  --accent:#E8705F; --accent-soft:#3A2320;
+  --data:#82B2E2; --data-2:#3E6187; --data-3:#28323D;
+  --good:#5CB585; --warn:#D3A24B;
+  --shadow:0 1px 2px rgba(0,0,0,.35), 0 8px 24px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"IBM Plex Sans Thai","IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:16px; line-height:1.72; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+.lat{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif}
+code,.mono,.num{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+
+/* ---------- shell ---------- */
+.wrap{max-width:1180px; margin:0 auto; padding-inline:20px; padding-block:0}
+.grid{display:grid; grid-template-columns:186px minmax(0,1fr); gap:48px; align-items:start}
+@media (max-width:900px){ .grid{grid-template-columns:1fr; gap:24px} }
+
+/* ---------- masthead ---------- */
+.mast{border-bottom:1px solid var(--line); background:var(--surface)}
+.mast-in{max-width:1180px; margin:0 auto; padding-inline:20px; padding-block:38px 30px}
+.eyebrow{
+  font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:600;
+  font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent);
+  display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+}
+.eyebrow::after{content:""; flex:1; min-width:24px; height:1px; background:var(--line)}
+h1{
+  font-size:clamp(30px,5vw,46px); line-height:1.15; font-weight:700; letter-spacing:-.015em;
+  margin:14px 0 10px; text-wrap:balance; max-width:20ch;
+}
+.dek{font-size:17px; color:var(--ink-2); max-width:62ch; margin:0 0 22px}
+.meta{
+  display:flex; flex-wrap:wrap; gap:6px 26px; font-size:13px; color:var(--ink-3);
+  border-top:1px solid var(--line); padding-top:16px;
+}
+.meta b{color:var(--ink-2); font-weight:600}
+
+/* ---------- key figures ---------- */
+.tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:1px;
+  background:var(--line); border:1px solid var(--line); border-radius:3px; overflow:hidden; margin-top:26px}
+.tile{background:var(--surface); padding:16px 18px}
+.tile .k{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-3); font-weight:600}
+.tile .v{font-family:"IBM Plex Mono",monospace; font-size:27px; font-weight:500; line-height:1.25;
+  font-variant-numeric:tabular-nums; margin-top:3px}
+.tile .s{font-size:12px; color:var(--ink-3); line-height:1.45}
+.tile.lead .v{color:var(--accent)}
+
+/* ---------- nav ---------- */
+nav{position:sticky; top:20px; font-size:13.5px; padding-top:44px}
+@media (max-width:900px){
+  nav{position:static; padding:18px 0 4px; border-bottom:1px solid var(--line)}
+}
+nav .nav-t{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink-3); font-weight:600; margin-bottom:10px}
+nav ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px}
+@media (max-width:900px){ nav ol{flex-direction:row; flex-wrap:wrap; gap:4px 14px} }
+nav a{color:var(--ink-2); text-decoration:none; display:block; padding:2px 0; line-height:1.45}
+nav a:hover{color:var(--accent)}
+nav a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+nav .n{font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-3); margin-right:7px}
+
+/* ---------- sections ---------- */
+main{padding-block:44px 72px; min-width:0}
+section{margin-bottom:54px; scroll-margin-top:24px}
+section > * + *{margin-top:16px}
+h2{
+  font-size:25px; font-weight:700; line-height:1.3; letter-spacing:-.01em;
+  margin:0 0 4px; text-wrap:balance; padding-bottom:12px; border-bottom:2px solid var(--ink);
+  display:flex; gap:12px; align-items:baseline;
+}
+h2 .n{font-family:"IBM Plex Mono",monospace; font-size:15px; font-weight:500; color:var(--accent)}
+h3{font-size:17.5px; font-weight:600; margin:34px 0 0; line-height:1.4; text-wrap:balance}
+h4{font-size:14.5px; font-weight:600; margin:22px 0 0; color:var(--ink-2)}
+p{margin:0; max-width:68ch}
+ul,ol.body{margin:0; padding-left:22px; max-width:68ch}
+ul li,ol.body li{margin-bottom:7px}
+strong{font-weight:600}
+a{color:var(--accent)}
+
+.lede{font-size:17.5px; line-height:1.68; color:var(--ink); max-width:64ch}
+
+/* ---------- callouts ---------- */
+.note{
+  border-left:3px solid var(--accent); background:var(--surface);
+  padding:16px 20px; border-radius:0 3px 3px 0; box-shadow:var(--shadow);
+}
+.note > * + *{margin-top:10px}
+.note .lab{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11px; font-weight:600;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--accent)}
+.note.q{border-left-color:var(--data-2)}
+.note.q .lab{color:var(--data)}
+
+/* ---------- tables ---------- */
+.tw{overflow-x:auto; border:1px solid var(--line); border-radius:3px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:14px; min-width:460px}
+caption{
+  caption-side:top; text-align:left; font-family:"IBM Plex Sans Condensed",sans-serif;
+  font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3);
+  font-weight:600; padding:12px 16px 0;
+}
+th,td{padding:9px 16px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top}
+thead th{
+  font-family:"IBM Plex Sans Condensed",sans-serif; font-size:12px; letter-spacing:.05em;
+  text-transform:uppercase; color:var(--ink-3); font-weight:600; white-space:nowrap;
+  border-bottom:1px solid var(--line-strong);
+}
+tbody tr:last-child td{border-bottom:none}
+td.n,th.n{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap}
+tr.hl td{background:var(--surface-2); font-weight:600}
+td .w{color:var(--ink-3); font-weight:400}
+.up{color:var(--good); font-weight:600}
+.dn{color:var(--accent); font-weight:600}
+
+/* ---------- bar charts ---------- */
+figure{margin:0}
+.chart{background:var(--surface); border:1px solid var(--line); border-radius:3px; padding:20px 22px 16px}
+.chart .ct{font-size:15px; font-weight:600; margin:0 0 3px; line-height:1.4}
+.chart .cs{font-size:13px; color:var(--ink-3); margin:0 0 18px; line-height:1.5; max-width:60ch}
+.bars{display:grid; gap:10px}
+.bar{display:grid; grid-template-columns:minmax(96px,auto) minmax(0,1fr) 54px; gap:12px; align-items:center}
+.bar .bl{font-size:13.5px; color:var(--ink-2); line-height:1.35}
+.bar .bt{position:relative; height:17px; background:var(--data-3); border-radius:2px; overflow:hidden}
+.bar .bf{position:absolute; inset:0 auto 0 0; background:var(--data-2); border-radius:2px 4px 4px 2px}
+.bar.on .bf{background:var(--data)}
+.bar .bv{font-family:"IBM Plex Mono",monospace; font-size:13px; font-variant-numeric:tabular-nums;
+  text-align:right; color:var(--ink-2)}
+.bar.on .bl,.bar.on .bv{color:var(--ink); font-weight:600}
+.axis{display:flex; justify-content:space-between; margin-top:12px; padding-top:7px;
+  border-top:1px solid var(--line); font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3)}
+.axis-in{display:grid; grid-template-columns:minmax(96px,auto) minmax(0,1fr) 54px; gap:12px; margin-top:10px}
+.ref{
+  position:absolute; top:-3px; bottom:-3px; width:0; border-left:1.5px dashed var(--accent);
+}
+.reflab{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11.5px; color:var(--accent);
+  margin-top:11px; display:flex; align-items:center; gap:7px; font-weight:600}
+.reflab::before{content:""; width:16px; border-top:1.5px dashed var(--accent)}
+
+/* ---------- confusion matrix ---------- */
+.cm{display:grid; grid-template-columns:auto 1fr 1fr; gap:1px; background:var(--line);
+  border:1px solid var(--line); border-radius:3px; overflow:hidden; font-size:14px; max-width:600px}
+.cm > div{background:var(--surface); padding:13px 16px}
+.cm .hd{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11.5px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--ink-3); font-weight:600; background:var(--surface-2)}
+.cm .rh{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:12px; color:var(--ink-3);
+  font-weight:600; background:var(--surface-2); white-space:nowrap}
+.cm .cell .q{font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.06em;
+  color:var(--ink-3); font-weight:600}
+.cm .cell .val{font-family:"IBM Plex Mono",monospace; font-size:19px; font-variant-numeric:tabular-nums;
+  line-height:1.35}
+.cm .hit .val{color:var(--good)} .cm .miss .val{color:var(--accent)}
+
+/* ---------- figures (images) ---------- */
+.fig{border:1px solid var(--line); border-radius:3px; background:var(--surface); overflow:hidden}
+.fig img{display:block; width:100%; max-width:100%; height:auto; background:var(--surface-2)}
+.fig figcaption{padding:13px 18px 15px; font-size:13.5px; color:var(--ink-2); line-height:1.6;
+  border-top:1px solid var(--line)}
+.fig figcaption b{font-family:"IBM Plex Sans Condensed",sans-serif; letter-spacing:.06em;
+  text-transform:uppercase; font-size:11.5px; color:var(--accent); display:block; margin-bottom:4px}
+
+/* ---------- params / code ---------- */
+.params{display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:1px;
+  background:var(--line); border:1px solid var(--line); border-radius:3px; overflow:hidden}
+.params div{background:var(--surface); padding:11px 14px}
+.params .pk{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3)}
+.params .pv{font-family:"IBM Plex Mono",monospace; font-size:16px; font-weight:500}
+.params .pn{font-size:11.5px; color:var(--ink-3); line-height:1.5; margin-top:2px}
+pre{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:3px;
+  padding:14px 16px; overflow-x:auto; font-size:12.5px; line-height:1.75; margin:0;
+  font-family:"IBM Plex Mono",monospace; color:var(--ink-2);
+}
+pre .c{color:var(--ink-3)}
+code{background:var(--surface-3); padding:1px 5px; border-radius:2px; font-size:.9em}
+
+footer{border-top:1px solid var(--line); padding-block:26px 44px; font-size:13px; color:var(--ink-3)}
+footer p{max-width:70ch}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<header class="mast">
+  <div class="mast-in">
+    <div class="eyebrow"><span>รายงานโครงงาน · Image Processing</span></div>
+    <h1>ระบบตรวจจับรอยร้าวบนพื้นผิวคอนกรีต</h1>
+    <p class="dek">ตรวจจับรอยร้าวเชิงโครงสร้างด้วยเทคนิคการประมวลผลภาพแบบดั้งเดิมล้วน ไม่ใช้ Deep Learning
+      วัดผลระดับพิกเซลบนชุดข้อมูลสาธารณะ CrackForest จำนวน 118 ภาพ</p>
+    <div class="meta">
+      <span><b>ชุดข้อมูล</b> CrackForest (CFD) · 118 ภาพ · 480×320 px</span>
+      <span><b>เครื่องมือ</b> Python + OpenCV 5.0</span>
+      <span><b>ทีม</b> 3 คน</span>
+      <span><b>วันที่</b> 20 กันยายน 2569</span>
+    </div>
+
+    <div class="tiles">
+      <div class="tile lead"><div class="k">Dice (F1)</div><div class="v">0.5024</div><div class="s">จาก 0.3201 ตอนเริ่มต้น</div></div>
+      <div class="tile"><div class="k">IoU</div><div class="v">0.3533</div><div class="s">จาก 0.2051</div></div>
+      <div class="tile"><div class="k">Precision</div><div class="v">0.5273</div><div class="s">จาก 0.2479</div></div>
+      <div class="tile"><div class="k">Recall</div><div class="v">0.5732</div><div class="s">จาก 0.5982</div></div>
+      <div class="tile"><div class="k">ความเร็ว</div><div class="v">7.0<span style="font-size:15px;color:var(--ink-3)"> ms</span></div><div class="s">ต่อภาพ · 143 ภาพ/วินาที</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="grid">
+
+<nav aria-label="สารบัญ">
+  <div class="nav-t">สารบัญ</div>
+  <ol>
+    <li><a href="#s0">บทสรุป</a></li>
+    <li><a href="#s1"><span class="n">1</span>ปัญหาและแรงบันดาลใจ</a></li>
+    <li><a href="#s2"><span class="n">2</span>จุดประสงค์</a></li>
+    <li><a href="#s3"><span class="n">3</span>ขอบเขตงาน</a></li>
+    <li><a href="#s4"><span class="n">4</span>งานวิจัยที่เกี่ยวข้อง</a></li>
+    <li><a href="#s5"><span class="n">5</span>วิธีการ</a></li>
+    <li><a href="#s6"><span class="n">6</span>ผลการทดลอง</a></li>
+    <li><a href="#s7"><span class="n">7</span>การประเมินผล</a></li>
+    <li><a href="#s8"><span class="n">8</span>การต่อยอด</a></li>
+    <li><a href="#s9">ภาคผนวก</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="s0">
+  <h2>บทสรุป</h2>
+  <p class="lede">ระบบใช้ไปป์ไลน์ 4 ขั้นตอน — ปรับภาพ, แยกพิกเซลด้วย Adaptive Thresholding,
+    จัดการด้วย Morphology และกรองด้วยรูปทรง — ได้ <b>Dice 0.5024 / IoU 0.3533</b> บนภาพจริงทั้ง 118 ภาพ
+    ดีขึ้นจากค่าเริ่มต้น 0.3201 / 0.2051</p>
+  <p>ตัวเลขที่รายงานทุกค่าเลือกพารามิเตอร์จากภาพฝึก 59 ภาพ แล้ววัดผลบนภาพที่กันไว้อีก 59 ภาพ
+    ซึ่งไม่เคยถูกใช้ในการค้นหาเลย (<b>Dice 0.5105</b> บนชุดที่กันไว้) จึงไม่ใช่ตัวเลขที่จูนมาเข้ากับข้อสอบของตัวเอง</p>
+  <p>ข้อค้นพบสำคัญ 3 อย่างจากการทดลอง:</p>
+  <ul>
+    <li><b>Adaptive Thresholding ชนะวิธีอื่นขาด</b> — ชนะ Otsu, Canny และ Sobel รวม 102 จาก 118 ภาพ
+      ทั้งที่ทุกวิธีถูกจูนด้วยกระบวนการเดียวกัน</li>
+    <li><b>เกณฑ์กรองรูปทรงเดิมทำให้ผลแย่ลง</b> — การวัดความเรียวด้วยอัตราส่วนกรอบสี่เหลี่ยมตัดรอยร้าวที่โค้ง
+      ทิ้งทั้งเส้น เปลี่ยนไปใช้ค่า circularity แล้วภาพที่เคยได้ 0.0000 กลับมาได้ 0.58</li>
+    <li><b>Accuracy ใช้วัดงานนี้ไม่ได้</b> — พิกเซลรอยร้าวมีแค่ 2.29% ของภาพ ระบบที่ตอบว่า
+      "ไม่มีรอยร้าว" ทุกพิกเซลจะได้ accuracy ประมาณ 0.977 ทันที</li>
+  </ul>
+</section>
+
+<section id="s1">
+  <h2><span class="n">1</span>ปัญหาที่สนใจ แรงบันดาลใจ และแหล่งที่มา</h2>
+  <p>เหตุการณ์แผ่นดินไหวที่ส่งผลกระทบต่อประเทศไทยในปีที่ผ่านมาทำให้เกิดความตื่นตัวเรื่องความปลอดภัย
+    ของอาคารและโครงสร้างพื้นฐานอย่างกว้างขวาง รอยร้าวบนผนังหรือเสาคอนกรีตเป็นหนึ่งในสัญญาณเตือน
+    แรกสุดของการเสื่อมสภาพเชิงโครงสร้าง</p>
+  <p>การตรวจสอบด้วยสายตามนุษย์ (Visual Inspection) ยังเป็นวิธีหลักในปัจจุบัน แต่เมื่อพื้นที่ตรวจสอบ
+    มีขนาดใหญ่หรืออยู่ในจุดที่เข้าถึงยาก วิธีนี้ใช้เวลานาน มีต้นทุนสูง และผลลัพธ์ขึ้นกับประสบการณ์
+    ของผู้ตรวจแต่ละคน จึงเกิดแนวคิดที่จะให้คอมพิวเตอร์ช่วยวิเคราะห์ภาพถ่ายพื้นผิว เพื่อคัดกรองเบื้องต้น
+    ว่าบริเวณใดควรให้วิศวกรเข้าไปตรวจสอบซ้ำ</p>
+</section>
+
+<section id="s2">
+  <h2><span class="n">2</span>จุดประสงค์ของงาน</h2>
+  <p>พัฒนาระบบประมวลผลภาพที่ตรวจจับและดึงลักษณะเส้นของรอยร้าวบนพื้นผิวคอนกรีตออกมาได้อัตโนมัติ
+    โดยต้องแยกแยะระหว่าง <b>รอยร้าวที่เกิดจากความเสียหายเชิงโครงสร้าง</b> กับ
+    <b>พื้นผิวขรุขระปกติ รูพรุน หรือรอยเปื้อน</b> ให้ได้</p>
+  <p>เงื่อนไขสำคัญของงานนี้คือใช้เทคนิคการประมวลผลภาพแบบดั้งเดิมเท่านั้น ไม่ใช้โมเดล Deep Learning
+    เพื่อให้ทุกขั้นตอนอธิบายได้ด้วยคณิตศาสตร์ของการจัดการภาพ และเพื่อให้เห็นว่าแต่ละเทคนิค
+    ให้ผลเท่าไรเมื่อวัดอย่างเป็นระบบ</p>
+</section>
+
+<section id="s3">
+  <h2><span class="n">3</span>ขอบเขตของงาน</h2>
+  <div class="tw">
+    <table>
+      <caption>ขอบเขตที่กำหนดไว้และสิ่งที่ทำได้จริง</caption>
+      <thead><tr><th>หัวข้อ</th><th>ขอบเขต</th></tr></thead>
+      <tbody>
+        <tr><td><b>เป้าหมาย</b></td><td>โปรแกรมต้นแบบที่รับภาพถ่ายพื้นผิวแล้วไฮไลต์บริเวณที่เป็นรอยร้าว พร้อมวัดผลเทียบภาพเฉลยได้</td></tr>
+        <tr><td><b>ข้อมูล</b></td><td>CrackForest (CFD) 118 ภาพ ขนาด 480×320 พิกเซล มีภาพเฉลยระดับพิกเซล เก็บเป็นไฟล์ MATLAB <code>.mat</code> แปลงเป็น PNG ด้วย <code>src/prepare_crackforest.py</code></td></tr>
+        <tr><td><b>เทคนิค</b></td><td>Traditional Image Processing ล้วน (OpenCV) ไม่ใช้ Deep Learning</td></tr>
+        <tr><td><b>การแบ่งงาน</b></td><td>คนที่ 1 การเตรียมภาพ · คนที่ 2 อัลกอริทึมและการปรับจูน · คนที่ 3 การวัดผลและสรุปผล</td></tr>
+        <tr><td><b>นอกขอบเขต</b></td><td>การประเมินความรุนแรงของรอยร้าว การวัดความกว้างเป็นหน่วยจริง และการทำงานบนวิดีโอแบบเรียลไทม์</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note q">
+    <div class="lab">ข้อจำกัดของชุดข้อมูล</div>
+    <p>CrackForest เป็นภาพ<b>ผิวถนนในเมือง</b> ไม่ใช่ผิวคอนกรีตในอาคาร ผิวถนนมี texture ของยางมะตอย
+      คราบ และเงาที่ไม่สม่ำเสมอ ซึ่งยากกว่าภาพคอนกรีตระยะใกล้ที่ถ่ายในแสงควบคุม
+      ตัวเลขที่ได้จึงควรอ่านในฐานะผลบนกรณีที่ยาก ไม่ใช่เพดานของวิธี</p>
+  </div>
+</section>
+
+<section id="s4">
+  <h2><span class="n">4</span>งานวิจัยที่เกี่ยวข้อง</h2>
+  <p>งานตรวจจับรอยร้าวด้วยการประมวลผลภาพแบบดั้งเดิมแบ่งได้เป็นสองสายหลัก คือ
+    <b>สายที่ใช้ค่าขีดแบ่งความสว่าง (Threshold-based)</b> ซึ่งอาศัยข้อเท็จจริงที่ว่ารอยร้าวมืดกว่าผิวรอบข้าง
+    และ <b>สายที่ใช้ขอบภาพ (Edge-based)</b> ซึ่งอาศัยการเปลี่ยนความสว่างอย่างฉับพลันบริเวณขอบรอยร้าว
+    โครงงานนี้เลือกสายแรกเป็นวิธีหลัก และนำสายที่สองมาวัดเทียบด้วยการทดลองของตัวเอง (หัวข้อ 6)</p>
+
+  <div class="tw">
+    <table>
+      <caption>เอกสารอ้างอิงใน relatedWork/</caption>
+      <thead><tr><th>เอกสาร</th><th>บทบาทต่อโครงงาน</th></tr></thead>
+      <tbody>
+        <tr><td><b>Dorafshan, Maguire &amp; Qi (2016)</b><br><span class="w">Automatic Surface Crack Detection in Concrete Structures Using OTSU Thresholding and Morphological Operations</span></td>
+            <td>เปเปอร์หลักที่โครงงานนี้เดินตาม เสนอการใช้ Otsu thresholding ร่วมกับ morphological operations
+              บนภาพผิวคอนกรีต เป็นที่มาของโครงไปป์ไลน์ threshold → morphology → กรองรูปทรง</td></tr>
+        <tr><td><b>Huang et al. (2025)</b><br><span class="w">A review of the progress in machine vision-based crack detection and identification technology for asphalt pavements</span></td>
+            <td>บทความปริทัศน์ ระบุว่าเทคนิคดั้งเดิม (thresholding, Sobel/Canny/Prewitt, morphological operations)
+              ทำงานได้ดีเมื่อพื้นหลังไม่ซับซ้อน แต่ <b>มีความทนทานต่ำเมื่อแสงและพื้นหลังซับซ้อน</b>
+              ขณะที่ Deep Learning รับมือได้ดีกว่าแต่ต้องใช้ข้อมูลที่มีเฉลยจำนวนมากและทรัพยากรคำนวณสูง</td></tr>
+        <tr><td><b>Han et al. (2021)</b><br><span class="w">An Advanced Otsu Method Integrated with Edge Detection and Decision Tree for Crack Detection in Highway Transportation Infrastructure</span></td>
+            <td>ตัวอย่างงานที่ผสม Otsu เข้ากับการตรวจจับขอบ แสดงว่าทั้งสองสายไม่จำเป็นต้องแยกจากกัน</td></tr>
+        <tr><td><b>Image Segmentation for Pavement Crack Detection System</b><br>
+                <span class="w">และ Pavement crack detection using Otsu thresholding for image segmentation (2018)</span></td>
+            <td>งานฝั่ง Otsu บนผิวถนนโดยเฉพาะ ใช้เทียบเคียงกับผลการทดลองของโครงงานนี้ที่พบว่า
+              Otsu ทำงานได้ไม่ดีบน CrackForest</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <div class="lab">ข้อสังเกตที่นำไปสู่การออกแบบ</div>
+    <p>ประเด็นที่บทความปริทัศน์ชี้ไว้ — ว่าเทคนิคดั้งเดิมอ่อนแอเมื่อแสงไม่สม่ำเสมอ — ตรงกับสิ่งที่วัดได้จริง
+      ในโครงงานนี้ Otsu ซึ่งใช้ค่าขีดแบ่ง<b>ค่าเดียวทั้งภาพ</b> ได้ Dice เพียง 0.2428 ขณะที่
+      Adaptive Thresholding ซึ่งเทียบพิกเซลกับเพื่อนบ้านในหน้าต่างเล็ก ๆ ได้ 0.5024
+      ความต่างนี้คือเหตุผลเชิงตัวเลขของการเลือกวิธีหลัก</p>
+  </div>
+</section>
+
+<section id="s5">
+  <h2><span class="n">5</span>ขั้นตอนและกระบวนการที่เลือกใช้</h2>
+  <p>ไปป์ไลน์แบ่งเป็น 4 ขั้นตอน แต่ละขั้นเขียนแยกเป็นไฟล์ของตัวเองใน <code>src/</code>
+    และเชื่อมต่อกันใน <code>src/pipeline.py</code></p>
+
+  <figure class="fig">
+    <img src="figures/pipeline_stages.png" alt="ภาพต้นฉบับและผลลัพธ์ของทั้ง 4 ขั้นตอนของไปป์ไลน์ สำหรับภาพ 001 และ 074 เทียบกับภาพเฉลย">
+    <figcaption><b>รูปที่ 1 — ผลลัพธ์ของแต่ละขั้นตอน</b>
+      ภาพ 001 (แถวบน) และ 074 (แถวล่าง) จากซ้าย: ภาพต้นฉบับ, ภาพหลังปรับ contrast,
+      ผลจาก Adaptive Thresholding ที่ยังเต็มไปด้วย noise, ผลหลัง morphology,
+      ผลสุดท้ายหลังกรองด้วยรูปทรง และภาพเฉลย จะเห็นว่างานหลักของขั้นที่ 3 และ 4
+      คือการกำจัดจุดรบกวนที่ขั้นที่ 2 เก็บติดมาด้วย</figcaption>
+  </figure>
+
+  <h3>ขั้นที่ 1 — การเตรียมภาพ (Pre-processing)</h3>
+  <p>แปลงภาพสีเป็นภาพระดับเทา ลดสัญญาณรบกวนด้วย Gaussian Blur ขนาด 5×5
+    แล้วเพิ่ม contrast เฉพาะที่ด้วย CLAHE (clip limit 2.0, tile 8×8)
+    ขั้นตอนนี้ทำให้รอยร้าวสีเข้มตัดกับผิวรอบข้างชัดขึ้นก่อนเข้าสู่การแยกพิกเซล</p>
+
+  <h3>ขั้นที่ 2 — การแยกพิกเซล (Segmentation)</h3>
+  <p>ใช้ Adaptive Thresholding แบบ Gaussian หน้าต่าง 35×35 ค่าชดเชย C = 15
+    หลักการคือเทียบความสว่างของแต่ละพิกเซลกับ<b>ค่าเฉลี่ยของเพื่อนบ้านในหน้าต่าง</b>
+    ไม่ใช่กับทั้งภาพ พิกเซลที่มืดกว่าเพื่อนบ้านเกินค่า C จะถูกนับเป็นรอยร้าว
+    วิธีนี้จึงไม่สนใจว่าโดยรวมภาพนั้นสว่างหรือมืด ทำให้ทนต่อเงาและแสงไม่สม่ำเสมอ</p>
+
+  <h3>ขั้นที่ 3 — Morphological Filtering</h3>
+  <p>ใช้ Closing (ขยายแล้วหด) ด้วย kernel วงรีขนาด 3×3 เพื่อเชื่อมรอยร้าวที่ขาดเป็นช่วง ๆ ให้ต่อกัน
+    ตามด้วย Opening (หดแล้วขยาย) ขนาด 3×3 เพื่อลบจุดรบกวนเล็ก ๆ ที่ไม่ใช่รอยร้าว</p>
+
+  <h3>ขั้นที่ 4 — การวิเคราะห์รูปทรง (Shape Analysis)</h3>
+  <p>ดึง connected component ที่เหลือแล้วกรองด้วยเกณฑ์สองข้อ:
+    <b>พื้นที่</b> (นับจำนวนพิกเซลจริง ต้องไม่น้อยกว่า 120 พิกเซล) และ
+    <b>ความเรียว</b> วัดด้วย circularity</p>
+  <pre><span class="c"># ยิ่งค่าน้อย ยิ่งเรียว — วงกลมสมบูรณ์ได้ค่า 1.0</span>
+circularity = 4 · π · area / perimeter²   <span class="c"># เก็บไว้เมื่อ ≤ 0.4</span></pre>
+  <p>จุดสำคัญคือ circularity <b>ไม่ขึ้นกับความโค้งของรอยร้าว</b> รอยร้าวที่เป็นรูปตัว T หรือแตกแขนง
+    ก็ยังได้ค่าต่ำเพราะมันเรียวจริง ซึ่งต่างจากเกณฑ์ที่ใช้ในตอนแรก (รายละเอียดในหัวข้อ 6)</p>
+
+  <h3>พารามิเตอร์ที่ใช้จริง</h3>
+  <p>ค่าทั้งหมดได้จากการค้นหาแบบ grid search ไม่ได้ตั้งด้วยการเดา เก็บไว้ใน
+    <code>outputs/tuned_params.json</code> และโหลดอัตโนมัติตอนรัน</p>
+  <div class="params">
+    <div><div class="pk">blur_ksize</div><div class="pv">5</div><div class="pn">ขนาด Gaussian blur</div></div>
+    <div><div class="pk">clip_limit</div><div class="pv">2.0</div><div class="pn">ความแรงของ CLAHE</div></div>
+    <div><div class="pk">tile</div><div class="pv">8</div><div class="pn">ขนาดช่องของ CLAHE</div></div>
+    <div><div class="pk">block_size</div><div class="pv">35</div><div class="pn">หน้าต่าง adaptive threshold</div></div>
+    <div><div class="pk">C</div><div class="pv">15</div><div class="pn">ค่าชดเชยความมืด</div></div>
+    <div><div class="pk">close_ksize</div><div class="pv">3</div><div class="pn">kernel เชื่อมรอยร้าว</div></div>
+    <div><div class="pk">open_ksize</div><div class="pv">3</div><div class="pn">kernel ลบ noise</div></div>
+    <div><div class="pk">min_area</div><div class="pv">120</div><div class="pn">พื้นที่ต่ำสุด (พิกเซล)</div></div>
+    <div><div class="pk">max_circ</div><div class="pv">0.4</div><div class="pn">ความกลมสูงสุดที่ยอมรับ</div></div>
+  </div>
+</section>
+
+<section id="s6">
+  <h2><span class="n">6</span>ผลการทดลอง</h2>
+  <p class="lede">ความคาดหวังตั้งแต่ต้นคือให้ระบบสร้าง binary mask ที่ไฮไลต์เฉพาะเส้นรอยร้าว
+    และกรอง noise จากความขรุขระ รูพรุน และเงาออกได้ระดับหนึ่ง ผลที่ได้เป็นไปตามนั้น
+    แต่มีเงื่อนไขที่ต้องอธิบาย</p>
+
+  <h3>วิธีการวัดที่ทำให้ตัวเลขเชื่อถือได้</h3>
+  <p>การจูนพารามิเตอร์บนภาพชุดเดียวกับที่ใช้วัดผลจะทำให้ได้ตัวเลขที่สูงเกินจริง
+    โครงงานนี้จึงแบ่งภาพ 118 ภาพออกเป็นสองส่วนแบบสลับกัน (ภาพเว้นภาพ เพื่อให้ทั้งสองฝั่ง
+    กระจายทั่วชุดข้อมูล) <b>ค้นหาพารามิเตอร์จาก 59 ภาพแรก และวัดผลบน 59 ภาพที่เหลือ
+    ซึ่งไม่เคยถูกแตะระหว่างการค้นหา</b></p>
+  <p>นอกจากนี้ เมื่อทดลองถึงเกือบ 5,000 ชุดพารามิเตอร์ ชุดที่ได้คะแนนสูงสุดมักเป็นชุดที่
+    "ฟลุก" กับภาพไม่กี่ภาพ จึงไม่เลือกด้วยคะแนนสูงสุดตรง ๆ แต่แบ่งภาพฝึกเป็น 5 กลุ่ม
+    แล้วเลือกชุดที่ได้คะแนน <code>ค่าเฉลี่ย − ส่วนเบี่ยงเบน</code> สูงสุด คือเลือกชุดที่ทั้ง<b>ดี</b>และ<b>นิ่ง</b></p>
+  <p>ผลคือช่องว่างระหว่างคะแนนบนภาพฝึกกับภาพที่กันไว้เหลือเพียง <b>0.001</b>
+    (เทียบกับ 0.040 ในรอบแรกที่ยังจูนแบบไม่แบ่งชุด)</p>
+
+  <h3>พัฒนาการของคะแนน</h3>
+  <figure class="chart">
+    <p class="ct">Dice บนภาพจริงทั้ง 118 ภาพ ตามรอบการปรับจูน</p>
+    <p class="cs">ค่าเฉลี่ยแบบ macro คือเฉลี่ยคะแนนของแต่ละภาพ ทุกภาพมีน้ำหนักเท่ากัน</p>
+    <div class="bars">
+      <div class="bar"><div class="bl">ค่าเริ่มต้น</div><div class="bt"><div class="bf" style="width:53.4%"></div></div><div class="bv">0.3201</div></div>
+      <div class="bar"><div class="bl">รอบที่ 1</div><div class="bt"><div class="bf" style="width:81.2%"></div></div><div class="bv">0.4872</div></div>
+      <div class="bar"><div class="bl">รอบที่ 2</div><div class="bt"><div class="bf" style="width:83.2%"></div></div><div class="bv">0.4991</div></div>
+      <div class="bar on"><div class="bl">รอบที่ 3</div><div class="bt"><div class="bf" style="width:83.7%"></div></div><div class="bv">0.5024</div></div>
+    </div>
+    <div class="axis-in"><div></div><div class="axis" style="border:none;margin:0;padding:0"><span>0</span><span>0.20</span><span>0.40</span><span>0.60</span></div><div></div></div>
+  </figure>
+
+  <div class="tw">
+    <table>
+      <caption>ค่าเฉลี่ยระดับพิกเซลบนภาพจริงทั้ง 118 ภาพ</caption>
+      <thead><tr><th>Metric</th><th class="n">ค่าเริ่มต้น</th><th class="n">รอบที่ 1</th><th class="n">รอบที่ 2</th><th class="n">รอบที่ 3</th><th class="n">เปลี่ยนแปลง</th></tr></thead>
+      <tbody>
+        <tr><td>Precision</td><td class="n">0.2479</td><td class="n">0.5349</td><td class="n">0.4990</td><td class="n"><b>0.5273</b></td><td class="n up">+0.279</td></tr>
+        <tr><td>Recall</td><td class="n">0.5982</td><td class="n">0.5194</td><td class="n">0.5781</td><td class="n"><b>0.5732</b></td><td class="n dn">−0.025</td></tr>
+        <tr><td>IoU</td><td class="n">0.2051</td><td class="n">0.3399</td><td class="n">0.3492</td><td class="n"><b>0.3533</b></td><td class="n up">+0.148</td></tr>
+        <tr class="hl"><td>Dice (F1)</td><td class="n">0.3201</td><td class="n">0.4872</td><td class="n">0.4991</td><td class="n">0.5024</td><td class="n up">+0.182</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>สิ่งที่เปลี่ยนมากที่สุดคือ precision ที่เพิ่มกว่าเท่าตัว หมายความว่าระบบเลิกทายพื้นผิวธรรมดา
+    ว่าเป็นรอยร้าว ขณะที่ recall ลดลงเพียงเล็กน้อย</p>
+
+  <h3>เทียบกับวิธีอื่น</h3>
+  <p>เพื่อให้การเปรียบเทียบเป็นธรรม ทุกวิธีถูกค้นหาพารามิเตอร์ของตัวเองด้วยกระบวนการเดียวกัน
+    และเปิดใช้งานครบทั้ง 4 ขั้นตอนเหมือนกัน</p>
+  <figure class="chart">
+    <p class="ct">Dice บนภาพที่กันไว้ 59 ภาพ แยกตามวิธีแยกพิกเซล</p>
+    <p class="cs">แต่ละวิธีจูนพารามิเตอร์ของ morphology และการกรองรูปทรงเป็นของตัวเอง</p>
+    <div class="bars">
+      <div class="bar on"><div class="bl">Adaptive</div><div class="bt"><div class="bf" style="width:85.1%"></div></div><div class="bv">0.5105</div></div>
+      <div class="bar"><div class="bl">Sobel</div><div class="bt"><div class="bf" style="width:52.7%"></div></div><div class="bv">0.3159</div></div>
+      <div class="bar"><div class="bl">Otsu</div><div class="bt"><div class="bf" style="width:37.6%"></div></div><div class="bv">0.2257</div></div>
+      <div class="bar"><div class="bl">Canny</div><div class="bt"><div class="bf" style="width:37.3%"></div></div><div class="bv">0.2237</div></div>
+    </div>
+    <div class="axis-in"><div></div><div class="axis" style="border:none;margin:0;padding:0"><span>0</span><span>0.20</span><span>0.40</span><span>0.60</span></div><div></div></div>
+  </figure>
+
+  <div class="tw">
+    <table>
+      <caption>เปรียบเทียบ 4 วิธี · โปรโตคอลเดียวกันทั้งหมด</caption>
+      <thead><tr><th>วิธี</th><th class="n">Dice (กันไว้)</th><th class="n">Dice (118 ภาพ)</th><th class="n">มัธยฐาน</th><th class="n">ภาพที่ Dice ≥ 0.5</th><th class="n">ชนะขาด</th><th class="n">False positive</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>Adaptive Thresholding</td><td class="n">0.5105</td><td class="n">0.5024</td><td class="n">0.5427</td><td class="n">73</td><td class="n">102</td><td class="n">171,802</td></tr>
+        <tr><td>Sobel</td><td class="n">0.3159</td><td class="n">0.2927</td><td class="n">0.2759</td><td class="n">14</td><td class="n">8</td><td class="n">463,628</td></tr>
+        <tr><td>Otsu</td><td class="n">0.2257</td><td class="n">0.2428</td><td class="n">0.2540</td><td class="n">9</td><td class="n">5</td><td class="n">392,289</td></tr>
+        <tr><td>Canny</td><td class="n">0.2237</td><td class="n">0.2107</td><td class="n">0.1865</td><td class="n">9</td><td class="n">3</td><td class="n">1,457,995</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure class="fig">
+    <img src="figures/method_comparison.png" alt="เปรียบเทียบ mask ที่ได้จาก adaptive, otsu, canny และ sobel บนภาพ 001, 023 และ 065">
+    <figcaption><b>รูปที่ 2 — mask จากแต่ละวิธีบนภาพเดียวกัน</b>
+      จะเห็นว่า Otsu, Canny และ Sobel ให้พื้นที่สีขาวจำนวนมากที่ไม่ใช่รอยร้าว
+      ขณะที่ Adaptive ให้เส้นที่ใกล้เคียงภาพเฉลยมากกว่า</figcaption>
+  </figure>
+
+  <p><b>เหตุผลที่ผลออกมาเช่นนี้</b> — Canny และ Sobel ตอบสนองต่อ<b>การเปลี่ยนความสว่างอย่างฉับพลัน</b>
+    ซึ่งบนผิวถนนมีอยู่ทั่วไปจาก texture ของยางมะตอย ขอบคราบ และเงา ทั้งหมดนี้ให้ gradient
+    แรงพอ ๆ กับขอบรอยร้าว ส่วน Otsu หาค่าขีดแบ่ง<b>ค่าเดียวสำหรับทั้งภาพ</b> จึงตัดเอาบริเวณ
+    ที่มืดกว่าค่าเฉลี่ย เช่น เงา มาเป็นรอยร้าวด้วย</p>
+
+  <div class="note q">
+    <div class="lab">เทียบกับ Dorafshan et al. (2016)</div>
+    <p>เปเปอร์อ้างอิงใช้ Otsu แล้วได้ผลดี ซึ่งดูขัดกับผลที่วัดได้ที่นี่ แต่เปเปอร์นั้นทำกับ
+      <b>ภาพผิวคอนกรีตระยะใกล้ในสภาพแสงที่ควบคุมได้</b> ขณะที่ CrackForest เป็นผิวถนนในเมือง
+      ผลที่ต่างกันจึงไม่ได้ขัดกับเปเปอร์ แต่สะท้อนว่า<b>เงื่อนไขการถ่ายภาพเป็นตัวกำหนดว่า
+      global threshold ใช้ได้หรือไม่</b> ซึ่งเป็นข้อสรุปที่มีน้ำหนักกว่าการบอกว่าวิธีใดดีกว่าโดยรวม</p>
+  </div>
+
+  <h3>บทเรียนสำคัญ: เกณฑ์กรองรูปทรงเดิมทำให้ผลแย่ลง</h3>
+  <p>ในสองรอบแรก ขั้นที่ 4 วัดความเรียวด้วย<b>อัตราส่วนด้านของกรอบสี่เหลี่ยมหมุนได้</b>
+    ที่ครอบ contour ไว้ ซึ่งตั้งอยู่บนสมมติฐานเงียบ ๆ ว่ารอยร้าวเป็นเส้นตรง</p>
+  <p>แต่รอยร้าวจริงโค้งและแตกแขนง รอยร้าวรูปตัว T จะมีกรอบครอบเกือบเป็นสี่เหลี่ยมจัตุรัส
+    ได้อัตราส่วนใกล้ 1 แล้วถูกตัดทิ้ง<b>ทั้งเส้น</b> ทั้งที่มันเรียวมาก
+    เมื่อวัดทั้งชุดข้อมูลพบว่าขั้นที่ 4 ตัดพิกเซลรอยร้าวจริงที่สามขั้นตอนแรก<b>หาเจอแล้ว</b>ทิ้งไปถึง 30.5%</p>
+
+  <figure class="chart">
+    <p class="ct">เกณฑ์กรองรูปทรงแบบใดให้ผลดีที่สุด</p>
+    <p class="cs">Dice สูงสุดที่ทำได้บนภาพฝึก จากการค้นหา 4,800 ชุดพารามิเตอร์ที่มีทั้งสองเกณฑ์อยู่ด้วยกัน</p>
+    <div class="bars">
+      <div class="bar on"><div class="bl">circularity</div><div class="bt"><div class="bf" style="width:87.4%"></div><div class="ref" style="left:86.7%"></div></div><div class="bv">0.5243</div></div>
+      <div class="bar"><div class="bl">ไม่กรองรูปทรง</div><div class="bt"><div class="bf" style="width:86.7%"></div><div class="ref" style="left:86.7%"></div></div><div class="bv">0.5201</div></div>
+      <div class="bar"><div class="bl">ใช้ทั้งสองเกณฑ์</div><div class="bt"><div class="bf" style="width:83.8%"></div><div class="ref" style="left:86.7%"></div></div><div class="bv">0.5030</div></div>
+      <div class="bar"><div class="bl">aspect ratio (เดิม)</div><div class="bt"><div class="bf" style="width:83.3%"></div><div class="ref" style="left:86.7%"></div></div><div class="bv">0.4997</div></div>
+    </div>
+    <div class="axis-in"><div></div><div class="axis" style="border:none;margin:0;padding:0"><span>0</span><span>0.20</span><span>0.40</span><span>0.60</span></div><div></div></div>
+    <div class="reflab">เส้นประ = คะแนนเมื่อไม่กรองรูปทรงเลย</div>
+  </figure>
+
+  <p>ผลที่สำคัญที่สุดไม่ใช่แค่ว่าเกณฑ์ใหม่ชนะ แต่คือ <b>เกณฑ์เดิมแย่กว่าการไม่กรองรูปทรงเลย</b>
+    (0.4997 เทียบกับ 0.5201) แปลว่าตลอดสองรอบแรก ขั้นตอนที่ 4 ในส่วนของการวิเคราะห์รูปทรง
+    ทำให้ผลแย่ลง ไม่ใช่ดีขึ้น ส่วนเกณฑ์ใหม่ดีกว่าการไม่กรอง (0.5243) จึงเป็นครั้งแรก
+    ที่ขั้นตอนนี้มีเหตุผลเชิงตัวเลขรองรับการมีอยู่ของมัน</p>
+
+  <div class="tw">
+    <table>
+      <caption>ผลของการเปลี่ยนเกณฑ์ · ภาพที่เคยล้มเหลว</caption>
+      <thead><tr><th>ภาพ</th><th class="n">Dice เดิม</th><th class="n">Dice ใหม่</th><th class="n">Recall เดิม</th><th class="n">Recall ใหม่</th></tr></thead>
+      <tbody>
+        <tr><td>065</td><td class="n">0.0000</td><td class="n"><b>0.5844</b></td><td class="n">0.000</td><td class="n">0.931</td></tr>
+        <tr><td>021</td><td class="n">0.0000</td><td class="n"><b>0.3632</b></td><td class="n">0.000</td><td class="n">0.756</td></tr>
+        <tr><td>084</td><td class="n">0.1878</td><td class="n"><b>0.4976</b></td><td class="n">0.111</td><td class="n">0.383</td></tr>
+        <tr><td>097</td><td class="n">0.1640</td><td class="n">0.2698</td><td class="n">0.092</td><td class="n">0.163</td></tr>
+        <tr><td>042</td><td class="n">0.0019</td><td class="n">0.0020</td><td class="n">0.001</td><td class="n">0.001</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <div class="lab">รายงานตามจริง</div>
+    <p>การเปลี่ยนเกณฑ์นี้<b>ไม่ใช่กำไรล้วน</b> เมื่อดูรายภาพพบว่าดีขึ้น 63 ภาพ แต่แย่ลง 55 ภาพ
+      ค่าเฉลี่ยรวมจึงขยับขึ้นเพียง +0.0033 มีภาพที่ถอยหลังชัดเจน เช่น 072 (0.632 → 0.379)
+      และ 049 (0.171 → 0.000) สิ่งที่ดีขึ้นแน่นอนคือ<b>การกระจายตัว</b>:
+      ภาพที่ได้ Dice ≥ 0.5 เพิ่มจาก 68 เป็น 73 ภาพ และภาพที่ได้ 0.0000 ลดจาก 2 เหลือ 1 ภาพ
+      อาการ "ตัดรอยร้าวทั้งเส้นทิ้ง" หายไป</p>
+  </div>
+
+  <h3>ตัวอย่างผลลัพธ์ที่ดี</h3>
+  <figure class="fig">
+    <img src="figures/success_cases.png" alt="ผลลัพธ์ที่ดีของภาพ 001, 022, 074 และ 112 แสดงภาพต้นฉบับ ภาพเฉลย ผลทำนาย และภาพซ้อนทับ">
+    <figcaption><b>รูปที่ 3 — กรณีที่ระบบทำงานได้ดี</b>
+      ภาพ 001, 022, 074 และ 112 เส้นรอยร้าวถูกลากตามได้ต่อเนื่อง และพื้นผิวรอบข้างถูกกรองออกเกือบหมด
+      ภาพกลุ่มนี้มีลักษณะร่วมกันคือรอยร้าวมี contrast ชัดและพื้นหลังค่อนข้างสม่ำเสมอ</figcaption>
+  </figure>
+
+  <h3>กรณีที่ยังล้มเหลว</h3>
+  <figure class="fig">
+    <img src="figures/failure_cases.png" alt="กรณีล้มเหลวของภาพ 021, 065, 084 และ 042 แสดงภาพต้นฉบับ ภาพเฉลย ผลทำนาย และภาพซ้อนทับ">
+    <figcaption><b>รูปที่ 4 — กรณีที่คะแนนต่ำ และสาเหตุที่ต่างกัน</b>
+      แถวบนลงล่าง: 021, 065, 084 และ 042 สามกรณีแรกมีสาเหตุที่ไม่ใช่ความผิดของการตรวจจับโดยตรง
+      ส่วน 042 คือกรณีที่ล้มเหลวจริง</figcaption>
+  </figure>
+
+  <div class="note">
+    <div class="lab">ข้อค้นพบ: บางกรณีเป็นปัญหาของภาพเฉลย ไม่ใช่ของระบบ</div>
+    <p><b>ภาพ 021</b> — ระบบลากตามรอยร้าวได้ดี (recall 0.756) แต่ precision เหลือเพียง 0.239
+      เพราะไปจับ<b>รอยแตกลายงาบนเส้นจราจรสีขาว</b>ด้วย ซึ่งเป็นรอยแตกจริง แต่ผู้จัดทำภาพเฉลย
+      ของ CrackForest ไม่ได้ทำเครื่องหมายไว้</p>
+    <p><b>ภาพ 084</b> — ภาพเฉลยวาดรอยร้าวไว้<b>หนากว่ารอยจริงมาก</b> เป็นแถบทึบ ขณะที่ผลทำนาย
+      เป็นเส้นบางตามรอยจริง ทำให้ recall ถูกจำกัดอยู่ที่ 0.383 ทั้งที่ precision สูงถึง 0.711</p>
+    <p>บทเรียนคือ <b>ตัววัดระดับพิกเซลลงโทษการตรวจเจอสิ่งที่คนวาดเฉลยไม่ได้วาด</b>
+      และ<b>ความหนาของเส้นในภาพเฉลยเป็นเพดานของ recall โดยตรง</b>
+      ส่วน <b>ภาพ 042</b> เป็นความล้มเหลวจริง — รอยร้าวจางจนแทบไม่มี contrast ให้จับ</p>
+  </div>
+</section>
+
+<section id="s7">
+  <h2><span class="n">7</span>หลักการประเมินผล</h2>
+  <p>การประเมินทำในระดับพิกเซล โดยเทียบ binary mask ที่โปรแกรมสร้างกับภาพเฉลยทีละพิกเซล
+    แล้วนับเป็น confusion matrix ซึ่งเป็นที่มาของทุกค่าที่รายงาน</p>
+
+  <div class="cm">
+    <div class="hd"></div>
+    <div class="hd">ภาพเฉลย: รอยร้าว</div>
+    <div class="hd">ภาพเฉลย: พื้นหลัง</div>
+    <div class="rh">ทำนาย: รอยร้าว</div>
+    <div class="cell hit"><div class="q">TP</div><div class="val">180,802</div></div>
+    <div class="cell miss"><div class="q">FP</div><div class="val">171,802</div></div>
+    <div class="rh">ทำนาย: พื้นหลัง</div>
+    <div class="cell miss"><div class="q">FN</div><div class="val">233,636</div></div>
+    <div class="cell"><div class="q">TN</div><div class="val">17,538,560</div></div>
+  </div>
+  <p style="font-size:13.5px;color:var(--ink-3)">รวม 18,124,800 พิกเซล จาก 118 ภาพ
+    เป็นพิกเซลรอยร้าว 414,438 พิกเซล หรือ <b>2.29%</b> ของทั้งหมด</p>
+
+  <h3>ตัวชี้วัดที่ใช้</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>ตัวชี้วัด</th><th>สูตร</th><th>ความหมายในงานนี้</th></tr></thead>
+      <tbody>
+        <tr><td><b>Precision</b></td><td class="mono">TP / (TP + FP)</td><td>ที่ทายว่าเป็นรอยร้าว ถูกจริงกี่ส่วน — ลดการแจ้งเตือนลวงจากรอยเปื้อนและเงา</td></tr>
+        <tr><td><b>Recall</b></td><td class="mono">TP / (TP + FN)</td><td>รอยร้าวจริงทั้งหมด ตรวจเจอกี่ส่วน — ลดรอยร้าวที่หลุดรอดไป</td></tr>
+        <tr><td><b>IoU</b></td><td class="mono">TP / (TP + FP + FN)</td><td>ความซ้อนทับระหว่าง mask กับเฉลย ตัวชี้วัดมาตรฐานของงาน segmentation</td></tr>
+        <tr><td><b>Dice (F1)</b></td><td class="mono">2·TP / (2·TP + FP + FN)</td><td>ค่าเฉลี่ยฮาร์มอนิกของ precision กับ recall ตัวเลขหลักที่ใช้รายงาน</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <div class="lab">ทำไมไม่ใช้ Accuracy</div>
+    <p>พิกเซลรอยร้าวมีเพียง 2.29% ของภาพ ระบบที่ตอบว่า "ไม่มีรอยร้าว" ทุกพิกเซลโดยไม่ทำอะไรเลย
+      จะได้ accuracy ประมาณ <b>0.977</b> ทันที</p>
+    <p>ในการทดลองนี้ Adaptive ได้ accuracy 0.9776 ส่วน Otsu ได้ 0.9621 — ต่างกันแทบไม่เห็น
+      ทั้งที่ Dice ต่างกันกว่าเท่าตัว (0.5024 เทียบกับ 0.2428)
+      <b>Accuracy จึงแยกระบบที่ดีออกจากระบบที่แย่ไม่ได้เลยในงานที่ข้อมูลไม่สมดุลขนาดนี้</b>
+      ตัวเลขที่มีความหมายคือ IoU และ Dice</p>
+  </div>
+
+  <h3>Macro เทียบกับ Micro</h3>
+  <p>รายงานค่าเฉลี่ยสองแบบ เพราะบอกคนละเรื่อง <b>Macro</b> คือเฉลี่ยคะแนนของแต่ละภาพ
+    ทุกภาพน้ำหนักเท่ากัน ส่วน <b>Micro</b> คือรวมพิกเซลทั้งชุดข้อมูลก่อนแล้วคำนวณครั้งเดียว
+    ภาพที่มีรอยร้าวยาวจึงมีน้ำหนักมากกว่า การดูทั้งคู่บอกได้ว่าคะแนนที่ได้มาจากภาพง่ายไม่กี่ภาพ
+    หรือมาจากทั้งชุดข้อมูลจริง</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>ค่าเฉลี่ย</th><th class="n">Precision</th><th class="n">Recall</th><th class="n">IoU</th><th class="n">Dice</th><th class="n">Accuracy</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>Macro (เฉลี่ยรายภาพ)</td><td class="n">0.5273</td><td class="n">0.5732</td><td class="n">0.3533</td><td class="n">0.5024</td><td class="n">—</td></tr>
+        <tr><td>Micro (รวมพิกเซล)</td><td class="n">0.5128</td><td class="n">0.4363</td><td class="n">0.3084</td><td class="n">0.4714</td><td class="n">0.9776</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Micro ต่ำกว่า macro เล็กน้อย โดยเฉพาะ recall แปลว่าภาพที่มีรอยร้าวยาว ๆ
+    ยังเป็นกลุ่มที่ระบบเก็บได้ไม่ครบ ซึ่งสอดคล้องกับข้อจำกัดที่เหลืออยู่ของขั้นที่ 4</p>
+  <p style="font-size:13.5px;color:var(--ink-3)">แม้หลังปรับปรุงแล้ว ขั้นที่ 4 ยังตัดพิกเซลรอยร้าวจริง
+    ที่สามขั้นตอนแรกหาเจอแล้วทิ้งไป 20.2% (ลดจาก 30.5%) ถ้าไม่ตัดทิ้งเลย micro-recall
+    จะขึ้นจาก 0.4363 เป็น 0.5469 — นี่คือเพดานที่ยังเหลือให้ไล่ตาม</p>
+</section>
+
+<section id="s8">
+  <h2><span class="n">8</span>การต่อยอด</h2>
+  <p>ไปป์ไลน์นี้ใช้เฉพาะการคูณ การเปรียบเทียบ และการดำเนินการกับเพื่อนบ้านในหน้าต่างเล็ก ๆ
+    ไม่มีการคูณเมทริกซ์ขนาดใหญ่หรือน้ำหนักโมเดลที่ต้องเก็บ จึงเหมาะกับการย้ายลงฮาร์ดแวร์ขนาดเล็ก</p>
+
+  <div class="tw">
+    <table>
+      <caption>เวลาประมวลผลต่อภาพ · 118 ภาพ ขนาด 480×320 บนซีพียูโน้ตบุ๊ก</caption>
+      <thead><tr><th>ขั้นตอน</th><th class="n">เวลา</th><th class="n">สัดส่วน</th></tr></thead>
+      <tbody>
+        <tr><td>1 · การเตรียมภาพ</td><td class="n">0.70 ms</td><td class="n">13.7%</td></tr>
+        <tr><td>2 · การแยกพิกเซล</td><td class="n">1.51 ms</td><td class="n">29.6%</td></tr>
+        <tr><td>3 · Morphology</td><td class="n">0.20 ms</td><td class="n">3.9%</td></tr>
+        <tr><td>4 · การวิเคราะห์รูปทรง</td><td class="n">2.70 ms</td><td class="n">52.9%</td></tr>
+        <tr class="hl"><td>รวมทั้งไปป์ไลน์</td><td class="n">7.00 ms</td><td class="n">143 ภาพ/วินาที</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>ตัวเลขนี้ทำให้ข้อเสนอเรื่องการนำไปใช้งานจริงมีน้ำหนัก: ที่ 143 ภาพต่อวินาที
+    งานนี้เหลือ headroom มากพอที่จะรันบนบอร์ดที่ช้ากว่าซีพียูนี้หลายสิบเท่าแล้วยังทำงานได้แบบเรียลไทม์
+    และจะเห็นว่า<b>ขั้นตอนที่ 4 กินเวลาเกินครึ่ง</b> ซึ่งเป็นจุดแรกที่ควร optimize หากจะย้ายลงบอร์ดจริง</p>
+
+  <h3>ทิศทางที่ทำต่อได้</h3>
+  <ul>
+    <li><b>ฝังลงฮาร์ดแวร์ขนาดเล็ก</b> — ปรับอัลกอริทึมให้เบาลงแล้วนำไปรันบน ESP32, STM32
+      หรือบอร์ด FPGA ติดตั้งร่วมกับกล้องและโดรนสำรวจ เพื่อบินถ่ายรอยร้าวตามซอกตึกหรือใต้สะพาน
+      ที่คนเข้าถึงยาก แล้วส่งการแจ้งเตือนพร้อมพิกัดเข้าระบบส่วนกลาง</li>
+    <li><b>ปรับปรุงขั้นที่ 4 ต่อ</b> — ยังมีพิกเซลรอยร้าวที่ถูกตัดทิ้ง 20.2% เกณฑ์อย่าง
+      อัตราส่วนความยาวเส้นแกนกลาง (skeleton) ต่อพื้นที่ น่าจะเก็บส่วนนี้กลับมาได้อีก</li>
+    <li><b>วัดความกว้างของรอยร้าวเป็นหน่วยจริง</b> — ถ้าทราบระยะกล้องหรือมีวัตถุอ้างอิงในภาพ
+      จะแปลงความกว้างเป็นมิลลิเมตรได้ ซึ่งเป็นตัวเลขที่วิศวกรใช้ตัดสินระดับความรุนแรงจริง</li>
+    <li><b>ทดสอบกับภาพผิวคอนกรีตในอาคาร</b> — ชุดข้อมูลที่ใช้เป็นผิวถนน การทดสอบกับผิวคอนกรีต
+      ในสภาพแสงที่ควบคุมได้น่าจะให้ผลดีกว่านี้ และตรงกับโจทย์ตั้งต้นมากกว่า</li>
+  </ul>
+</section>
+
+<section id="s9">
+  <h2>ภาคผนวก</h2>
+
+  <h3>ขั้นตอนที่ 1 มีประโยชน์จริงแค่ไหน</h3>
+  <p>ทดสอบโดยปิดแต่ละส่วนของการเตรียมภาพ แล้ววัดผลด้วยโปรโตคอลเดียวกัน</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Gaussian Blur</th><th>CLAHE</th><th class="n">Dice ดีที่สุด</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>เปิด</td><td>เปิด</td><td class="n">0.4929</td></tr>
+        <tr><td>ปิด</td><td>เปิด</td><td class="n">0.4197</td></tr>
+        <tr><td>ปิด</td><td>ปิด</td><td class="n">0.2699</td></tr>
+        <tr><td>เปิด</td><td>ปิด</td><td class="n">0.2306</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>CLAHE คือหัวใจของขั้นตอนนี้ ถ้าเอาออก Dice หายไปกว่าครึ่ง ที่น่าสนใจกว่าคือ
+    <b>การเบลออย่างเดียวให้ผลแย่กว่าการไม่ทำอะไรเลย</b> (0.2306 เทียบกับ 0.2699)
+    เพราะรอยร้าวบางมาก การเบลอไปกลบมันทิ้งโดยไม่ได้อะไรกลับมา
+    การเบลอจะคุ้มก็ต่อเมื่อมี CLAHE ดึง contrast กลับคืนมาให้ เป็นปฏิสัมพันธ์ที่มองไม่เห็น
+    หากทดสอบทีละตัว</p>
+
+  <h3>การทำซ้ำ</h3>
+  <pre><span class="c"># ติดตั้ง</span>
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+<span class="c"># เตรียมชุดข้อมูล</span>
+git clone https://github.com/cuilimeng/CrackForest-dataset.git data\CrackForest
+python src\prepare_crackforest.py --src data\CrackForest
+
+<span class="c"># ค้นหาพารามิเตอร์ แล้วเลือกด้วยโปรโตคอล train/held-out</span>
+python src\tune.py --subset 0 --holdout 0.5 --csv outputs\tune_results_round3.csv
+python src\select_params.py --results outputs\tune_results_round3.csv --variant full --apply
+
+<span class="c"># วัดผลทั้ง 118 ภาพ พร้อม confusion matrix</span>
+python main.py --input data\raw\images --gt data\raw\masks ^
+    --csv outputs\metrics.csv --confusion outputs\confusion.txt
+
+<span class="c"># สร้างรูปสำหรับรายงาน</span>
+python src\make_figures.py --stages 001 074 --out outputs\figures\pipeline_stages.png
+python src\make_figures.py --images 021 065 084 042 --out outputs\figures\failure_cases.png</pre>
+
+  <h3>โครงสร้างโค้ด</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>ไฟล์</th><th>หน้าที่</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">src/preprocessing.py</td><td>ขั้นที่ 1 · เทา → เบลอ → CLAHE</td></tr>
+        <tr><td class="mono">src/segmentation.py</td><td>ขั้นที่ 2 · adaptive, otsu, canny, sobel</td></tr>
+        <tr><td class="mono">src/morphology.py</td><td>ขั้นที่ 3 · closing แล้ว opening</td></tr>
+        <tr><td class="mono">src/shape_filter.py</td><td>ขั้นที่ 4 · กรองด้วยพื้นที่และ circularity</td></tr>
+        <tr><td class="mono">src/pipeline.py</td><td>เชื่อมทั้งสี่ขั้น และโหลดพารามิเตอร์ที่จูนไว้</td></tr>
+        <tr><td class="mono">src/evaluate.py</td><td>confusion matrix และตัวชี้วัดทั้งหมด</td></tr>
+        <tr><td class="mono">src/tune.py</td><td>grid search ขั้นที่ 2–4 พร้อมการแบ่ง train/held-out</td></tr>
+        <tr><td class="mono">src/select_params.py</td><td>เลือกพารามิเตอร์แบบสองขั้นด้วยความนิ่งข้าม fold</td></tr>
+        <tr><td class="mono">src/tune_preprocess.py</td><td>ค้นหาและทดสอบการปิดเปิดของขั้นที่ 1</td></tr>
+        <tr><td class="mono">src/make_figures.py</td><td>สร้างแผงรูปสำหรับรายงาน</td></tr>
+        <tr><td class="mono">main.py</td><td>คำสั่งหลัก รับภาพเดี่ยวหรือทั้งโฟลเดอร์</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>ข้อจำกัดที่ควรระบุ</h3>
+  <ul>
+    <li>ทดสอบบนชุดข้อมูลเดียว (CrackForest) ซึ่งเป็นผิวถนน ไม่ใช่ผิวคอนกรีตในอาคารตามโจทย์ตั้งต้น</li>
+    <li>ภาพทั้งหมดมีขนาดเท่ากัน (480×320) ยังไม่ได้ทดสอบกับภาพความละเอียดอื่น ซึ่งจะกระทบ
+      ค่า <code>block_size</code> และ <code>min_area</code> โดยตรง</li>
+    <li>ระบบบอกได้ว่าพิกเซลใดเป็นรอยร้าว แต่ยังไม่ประเมินความรุนแรงหรือความกว้างเป็นหน่วยจริง</li>
+    <li>ตัวเลขบางส่วนถูกจำกัดด้วยคุณภาพของภาพเฉลยเอง ตามที่อธิบายไว้ในหัวข้อ 6</li>
+  </ul>
+</section>
+
+<footer>
+  <p>รายงานฉบับนี้สร้างจากผลการทดลองที่บันทึกไว้ใน <code>docs/Tuning Journal.md</code>
+    ตัวเลขทุกค่าในรายงานอ้างอิงจากไฟล์ <code>outputs/metrics.csv</code>
+    และผลการค้นหาพารามิเตอร์ใน <code>outputs/tune_results_*.csv</code>
+    ซึ่งสร้างซ้ำได้ด้วยคำสั่งในภาคผนวก</p>
+</footer>
+
+</main>
+</div>
+</div>

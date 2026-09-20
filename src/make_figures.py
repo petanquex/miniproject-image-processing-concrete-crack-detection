@@ -13,6 +13,10 @@ Two kinds of figure:
       one row per image, one column per method, so adaptive / otsu / canny /
       sobel can be looked at side by side on the same image.
 
+  --stages 001
+      one row per image showing what each pipeline step produces:
+      pre-processed grayscale, segmentation, morphology, shape filter.
+
 Usage
 -----
 python src/make_figures.py --images 021 065 042 023 --out outputs/figures/failure_cases.png
@@ -87,6 +91,30 @@ def panel_failures(stems, images, masks, out):
     print(f"wrote {out}")
 
 
+def panel_stages(stems, images, masks, out):
+    titles = [("gray", "1. pre-processing"), ("segmented", "2. segmentation"),
+              ("morphology", "3. morphology"), ("final", "4. shape filter")]
+    fig, axes = plt.subplots(len(stems), 6,
+                             figsize=(19, 3.1 * len(stems)), squeeze=False)
+    for row, stem in enumerate(stems):
+        image = cv2.imread(find(images, stem))
+        gt = cv2.imread(find(masks, stem), cv2.IMREAD_GRAYSCALE)
+        pred, stages = detect_cracks(image, return_stages=True)
+        m = pixel_metrics(pred, gt)
+        axes[row][0].imshow(rgb(image))
+        axes[row][0].set_title(f"{stem} - original", fontsize=9)
+        for col, (key, title) in enumerate(titles, start=1):
+            axes[row][col].imshow(stages[key], cmap="gray")
+            axes[row][col].set_title(title, fontsize=9)
+        axes[row][5].imshow(gt, cmap="gray")
+        axes[row][5].set_title(f"ground truth - Dice {m['dice']:.3f}", fontsize=9)
+        for ax in axes[row]:
+            ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(out, dpi=130)
+    print(f"wrote {out}")
+
+
 def panel_compare(stems, methods, images, masks, out):
     ncol = len(methods) + 2
     fig, axes = plt.subplots(len(stems), ncol,
@@ -119,16 +147,19 @@ def main():
     ap.add_argument("--masks-dir", default="data/raw/masks")
     ap.add_argument("--images", nargs="+", help="stems for the failure panel")
     ap.add_argument("--compare", nargs="+", help="stems for the method panel")
+    ap.add_argument("--stages", nargs="+", help="stems for the per-step panel")
     ap.add_argument("--methods", nargs="+",
                     default=["adaptive", "otsu", "canny", "sobel"])
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    if not args.images and not args.compare:
-        raise SystemExit("pass --images or --compare")
+    if not (args.images or args.compare or args.stages):
+        raise SystemExit("pass --images, --compare or --stages")
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     if args.images:
         panel_failures(args.images, args.images_dir, args.masks_dir, args.out)
+    elif args.stages:
+        panel_stages(args.stages, args.images_dir, args.masks_dir, args.out)
     else:
         panel_compare(args.compare, args.methods,
                       args.images_dir, args.masks_dir, args.out)
