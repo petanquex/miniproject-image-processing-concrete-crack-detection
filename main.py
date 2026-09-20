@@ -63,6 +63,9 @@ def main():
 
     all_metrics = []
     for img_path in list_images(args.input):
+        stem_check = os.path.splitext(os.path.basename(img_path))[0].lower()
+        if stem_check in ("sample",):          # skip synthetic test image
+            continue
         image = cv2.imread(img_path)
         if image is None:
             print(f"[skip] could not read {img_path}")

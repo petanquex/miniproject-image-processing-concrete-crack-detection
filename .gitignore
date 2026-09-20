@@ -20,6 +20,7 @@ data/raw/masks/*
 data/results/*
 outputs/figures/*
 outputs/metrics.csv
+outputs/tuned_params.json
 
 # keep the folder structure in git
 !**/.gitkeep

@@ -2,25 +2,65 @@
 pipeline.py  —  Full crack-detection pipeline
 Chains all four steps: Pre-processing -> Segmentation -> Morphology -> Shape filtering.
 """
+import json
+import os
+
 import cv2
 import numpy as np
 
 from preprocessing import preprocess
-from segmentation import segment
+from segmentation import segment, segment_adaptive
 from morphology import apply_morphology
 from shape_filter import filter_shapes
 
+# Default parameters. These are overridden by outputs/tuned_params.json when it
+# exists (created by src/tune.py), so a tuning run improves results with no code
+# change. Heuristic starting point for CrackForest-style images (thin dark
+# cracks, ~480x320): a larger threshold window + stricter C favor precision,
+# and a stronger opening + area/aspect filter drop background speckle.
+DEFAULT_PARAMS = {
+    "block_size": 51,
+    "C": 12,
+    "close_ksize": 5,
+    "open_ksize": 5,
+    "min_area": 120,
+    "min_aspect": 3.0,
+}
 
-def detect_cracks(image, method="adaptive", return_stages=False):
+_TUNED_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "outputs", "tuned_params.json"
+)
+
+
+def load_params(overrides=None):
+    """Merge DEFAULT_PARAMS <- tuned_params.json <- explicit overrides."""
+    params = dict(DEFAULT_PARAMS)
+    if os.path.exists(_TUNED_PATH):
+        try:
+            with open(_TUNED_PATH) as f:
+                params.update(json.load(f))
+        except (ValueError, OSError):
+            pass
+    if overrides:
+        params.update({k: v for k, v in overrides.items() if v is not None})
+    return params
+
+
+def detect_cracks(image, method="adaptive", params=None, return_stages=False):
     """
     Run the pipeline on a BGR image (numpy array).
     Returns the final binary crack mask (uint8, 0/255).
-    If return_stages=True, also returns a dict of intermediate images.
+    `params` overrides the tuned/default parameters for any stage.
     """
+    p = load_params(params)
+
     gray = preprocess(image)
-    seg = segment(gray, method=method)
-    morph = apply_morphology(seg)
-    mask = filter_shapes(morph)
+    if method == "adaptive":
+        seg = segment_adaptive(gray, block_size=p["block_size"], C=p["C"])
+    else:
+        seg = segment(gray, method=method)
+    morph = apply_morphology(seg, p["close_ksize"], p["open_ksize"])
+    mask = filter_shapes(morph, p["min_area"], p["min_aspect"])
 
     if return_stages:
         stages = {
