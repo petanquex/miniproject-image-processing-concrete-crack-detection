@@ -10,8 +10,14 @@ Usage
 -----
 python src/tune.py --images data/raw/images --masks data/raw/masks --subset 25
 python src/tune.py --images data/raw/images --masks data/raw/masks --subset 25 --apply
+
+Use --holdout to keep part of the dataset out of the search, so the reported
+score is measured on images the parameters were never fitted on:
+
+python src/tune.py --subset 0 --holdout 0.5 --apply
 """
 import argparse
+import csv
 import glob
 import itertools
 import json
@@ -29,14 +35,19 @@ from shape_filter import filter_shapes          # noqa: E402
 from evaluate import pixel_metrics, average_metrics  # noqa: E402
 
 # ---- search space (edit these lists to widen/narrow the search) ----
+# Round 2: the round-1 best sat on the edge of the old grid (C at the maximum,
+# kernels and min_area at the minimum), so every edge is pushed outwards here.
+# ksize = 1 means "skip this morphological step" (a 1x1 kernel is a no-op).
 GRID = {
-    "block_size": [25, 35, 51, 75],
-    "C":          [5, 10, 15],
-    "close_ksize":[3, 5, 7],
-    "open_ksize": [3, 5],
-    "min_area":   [50, 120, 250],
-    "min_aspect": [2.0, 3.0, 4.0],
+    "block_size": [15, 25, 35, 51, 75],
+    "C":          [10, 12, 15, 18, 21, 25],
+    "close_ksize":[1, 3, 5],
+    "open_ksize": [1, 3],
+    "min_area":   [10, 20, 35, 50, 80],
+    "min_aspect": [1.5, 2.0, 3.0, 4.0],
 }
+
+KEYS = list(GRID.keys())
 
 
 def load_pairs(img_dir, mask_dir, subset):
@@ -55,14 +66,43 @@ def load_pairs(img_dir, mask_dir, subset):
     return pairs
 
 
-def run_combo(pre_grays, gts, p):
+def split_pairs(pairs, holdout):
+    """
+    Split into (train, test). Test images are taken at a fixed stride so both
+    halves span the whole dataset instead of one contiguous block.
+    holdout <= 0 puts everything in train and leaves test empty.
+    """
+    if holdout <= 0:
+        return pairs, []
+    step = max(2, int(round(1.0 / holdout)))
+    test = pairs[step - 1::step]
+    test_set = set(test)
+    train = [q for q in pairs if q not in test_set]
+    return train, test
+
+
+def load_stage(pairs):
+    """Read + pre-process once; the result is reused by every combination."""
+    pre_grays, gts = [], []
+    for img_path, mask_path in pairs:
+        pre_grays.append(preprocess(cv2.imread(img_path)))
+        gts.append(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE))
+    return pre_grays, gts
+
+
+def run_per_image(pre_grays, gts, p):
+    """Run the tunable part of the pipeline; return one metrics dict per image."""
     metrics = []
     for gray, gt in zip(pre_grays, gts):
         seg = segment_adaptive(gray, block_size=p["block_size"], C=p["C"])
         morph = apply_morphology(seg, p["close_ksize"], p["open_ksize"])
         mask = filter_shapes(morph, p["min_area"], p["min_aspect"])
         metrics.append(pixel_metrics(mask, gt))
-    return average_metrics(metrics)
+    return metrics
+
+
+def run_combo(pre_grays, gts, p):
+    return average_metrics(run_per_image(pre_grays, gts, p))
 
 
 def main():
@@ -71,25 +111,32 @@ def main():
     ap.add_argument("--masks", default="data/raw/masks")
     ap.add_argument("--subset", type=int, default=25,
                     help="how many images to search on (0 = all)")
+    ap.add_argument("--holdout", type=float, default=0.0,
+                    help="fraction of images kept out of the search and used "
+                         "only to score the winner (0 = no split)")
     ap.add_argument("--apply", action="store_true",
                     help="write best params to outputs/tuned_params.json")
     ap.add_argument("--top", type=int, default=8)
+    ap.add_argument("--csv", default=None,
+                    help="write every combination and its scores to this file")
     args = ap.parse_args()
 
     pairs = load_pairs(args.images, args.masks, args.subset)
     if not pairs:
-        raise SystemExit("No image/mask pairs found — check --images/--masks.")
-    print(f"Searching on {len(pairs)} images...")
+        raise SystemExit("No image/mask pairs found - check --images/--masks.")
+
+    train_pairs, test_pairs = split_pairs(pairs, args.holdout)
+    if test_pairs:
+        print(f"Searching on {len(train_pairs)} images, "
+              f"holding out {len(test_pairs)} for scoring...")
+    else:
+        print(f"Searching on {len(train_pairs)} images...")
 
     # pre-process once (same for every combo) to save time
-    pre_grays, gts = [], []
-    for img_path, mask_path in pairs:
-        img = cv2.imread(img_path)
-        gt = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        pre_grays.append(preprocess(img))
-        gts.append(gt)
+    pre_grays, gts = load_stage(train_pairs)
+    test_grays, test_gts = load_stage(test_pairs)
 
-    keys = list(GRID.keys())
+    keys = KEYS
     combos = list(itertools.product(*[GRID[k] for k in keys]))
     print(f"Testing {len(combos)} parameter combinations...\n")
 
@@ -98,17 +145,40 @@ def main():
         p = dict(zip(keys, values))
         m = run_combo(pre_grays, gts, p)
         results.append((m["dice"], m["iou"], m["precision"], m["recall"], p))
-        if i % 50 == 0:
+        if i % 100 == 0:
             print(f"  ...{i}/{len(combos)}")
 
     results.sort(reverse=True, key=lambda r: r[0])  # by Dice
-    print("\n=== TOP RESULTS (by Dice) ===")
-    print(f"{'Dice':>6} {'IoU':>6} {'Prec':>6} {'Rec':>6}  params")
+
+    label = "train" if test_pairs else "search set"
+    print(f"\n=== TOP RESULTS (by Dice on the {label}) ===")
+    header = f"{'Dice':>6} {'IoU':>6} {'Prec':>6} {'Rec':>6}"
+    if test_pairs:
+        header += f" | {'Dice*':>6} {'IoU*':>6}"
+    print(header + "  params")
     for dice, iou, prec, rec, p in results[:args.top]:
-        print(f"{dice:>6} {iou:>6} {prec:>6} {rec:>6}  {p}")
+        line = f"{dice:>6} {iou:>6} {prec:>6} {rec:>6}"
+        if test_pairs:
+            t = run_combo(test_grays, test_gts, p)
+            line += f" | {t['dice']:>6} {t['iou']:>6}"
+        print(line + f"  {p}")
+    if test_pairs:
+        print("(* = held-out images, never used in the search)")
 
     best = results[0][4]
     print("\nBest params:", best)
+    if test_pairs:
+        t = run_combo(test_grays, test_gts, best)
+        print("Held-out score:", t)
+
+    if args.csv:
+        os.makedirs(os.path.dirname(args.csv) or ".", exist_ok=True)
+        with open(args.csv, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(keys + ["precision", "recall", "iou", "dice"])
+            for dice, iou, prec, rec, p in results:
+                w.writerow([p[k] for k in keys] + [prec, rec, iou, dice])
+        print(f"Wrote {args.csv}")
 
     if args.apply:
         os.makedirs("outputs", exist_ok=True)

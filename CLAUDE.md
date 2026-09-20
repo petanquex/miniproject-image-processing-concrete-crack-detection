@@ -30,7 +30,9 @@ src/morphology.py       step 3
 src/shape_filter.py     step 4
 src/pipeline.py         detect_cracks(); loads outputs/tuned_params.json if present
 src/evaluate.py         pixel_metrics(), average_metrics()
-src/tune.py             grid-search params to maximize mean Dice, --apply writes tuned_params.json
+src/tune.py             grid-search params to maximize mean Dice; --holdout splits train/test
+src/select_params.py    2-stage selection from a tune.py CSV; --variant constrains which
+                        pipeline steps must stay active; --apply writes tuned_params.json
 src/prepare_crackforest.py  convert CrackForest .mat ground truth -> PNG masks
 notebooks/demo.ipynb    step-by-step visual demo
 data/raw/{images,masks} input images + ground-truth masks (same filename stem)
@@ -75,36 +77,55 @@ converts these to 0/255 PNG masks in `data/raw/masks/`.
 
 ## Current status
 
-Cleanup, tuning, and full re-evaluation are done (2026-09-14). Full log, per-image
-analysis, and failure cases: `docs/Tuning Journal.md`.
+Round 2 of tuning is done (2026-09-20). Full log, ablation table, per-image analysis
+and failure cases: `docs/Tuning Journal.md`.
 
-Mean pixel-level metrics on the 118 real CrackForest images (synthetic `sample`
-removed — the earlier ≈0.21 / ≈0.32 figures had it included and were inflated):
+Mean pixel-level metrics on the 118 real CrackForest images (the synthetic `sample`
+image is skipped by `main.py`):
 
-| Metric    | Baseline (commit `723e49d` defaults) | Tuned (`outputs/tuned_params.json`) |
-|-----------|--------------------------------------|-------------------------------------|
-| Precision | 0.2479                               | **0.5349**                          |
-| Recall    | 0.5982                               | 0.5194                              |
-| IoU       | 0.2051                               | **0.3399**                          |
-| Dice      | 0.3201                               | **0.4872**                          |
+| Metric    | Baseline (`723e49d` defaults) | Round 1 tuned | **Round 2 tuned (current)** |
+|-----------|-------------------------------|---------------|-----------------------------|
+| Precision | 0.2479                        | **0.5349**    | 0.4990                      |
+| Recall    | 0.5982                        | 0.5194        | **0.5781**                  |
+| IoU       | 0.2051                        | 0.3399        | **0.3492**                  |
+| Dice      | 0.3201                        | 0.4872        | **0.4991**                  |
+
+Round 2 also reports an honest held-out number: the parameters were selected using
+only 59 training images and score **Dice 0.5068 / IoU 0.3546** on the 59 images held
+out of the search. Round 1 had a 0.040 train/test gap; round 2's is 0.001.
 
 - Baseline params: `block_size=35, C=10, close_ksize=5, open_ksize=3, min_area=60, min_aspect=3.0`
-- Tuned params:    `block_size=35, C=15, close_ksize=3, open_ksize=3, min_area=50, min_aspect=3.0`
-  (grid search on a 25-image subset, Dice 0.5272 there → 0.4872 on all 118, mild overfit)
+- Round 1:         `block_size=35, C=15, close_ksize=3, open_ksize=3, min_area=50, min_aspect=3.0`
+- Round 2 (current, in `outputs/tuned_params.json`):
+                   `block_size=51, C=15, close_ksize=3, open_ksize=3, min_area=80, min_aspect=3.0`
+
+**Ablation (same selection protocol, held-out Dice).** Left unconstrained, the search
+turns morphology and the aspect filter off (`ksize=1`, `min_aspect=1.0`) because
+`min_area` already removes the noise that opening removed, and opening breaks the very
+thin CrackForest cracks. The shipped parameters deliberately keep all four steps active;
+that costs 0.0145 Dice:
+
+| Variant                    | Held-out Dice | All 118 |
+|----------------------------|---------------|---------|
+| unconstrained              | 0.5213        | 0.5205  |
+| morphology forced on       | 0.5003        | 0.4888  |
+| aspect filter forced on    | 0.5142        | 0.5090  |
+| **all 4 steps on (shipped)** | **0.5068**  | 0.4991  |
 
 Reproduce:
 ```powershell
-python src\tune.py --images data\raw\images --masks data\raw\masks --subset 25 --apply
+python src\tune.py --subset 0 --holdout 0.5 --csv outputs\tune_results_round2.csv
+python src\select_params.py --results outputs\tune_results_round2.csv --variant full --apply
 python main.py --input data\raw\images --gt data\raw\masks --csv outputs\metrics.csv
 ```
 
 ## Next work
 
-- Best tuned values sit on the edge of the search grid (C at max; kernels and
-  min_area at min) — widen `GRID` in `src/tune.py` and re-tune.
-- Tune on all images (`--subset 0`) or a train/test split to reduce overfitting.
-- Compare against Otsu (`--method otsu`) to relate to Dorafshan et al. (2016).
-- Weakest images after tuning: 065, 042, 023, 084 (use as failure cases in the report).
+- Compare against Otsu (`--method otsu`) to relate to Dorafshan et al. (2016) — still open.
+- Weakest images after round 2: 021, 065, 042, 023, 052, 097 (use as failure cases).
+  021 and 052 clearly regressed from round 1 — worth explaining in the report.
+- Put the ablation table above into the report; it is direct evidence of what each
+  pipeline step contributes.
 
 ## Conventions
 
