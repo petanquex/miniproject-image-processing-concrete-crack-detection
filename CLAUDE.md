@@ -17,8 +17,9 @@ a proposal deck, and a report.
 3. **Morphological filtering** (`src/morphology.py`) — Closing reconnects cracks, Opening removes noise
 4. **Shape analysis** (`src/shape_filter.py`) — keep thin/long contours (area + aspect ratio), drop round pores/stains
 
-`src/pipeline.py` chains all four. `src/evaluate.py` computes **pixel-level** metrics:
-Precision, Recall, IoU (Jaccard), Dice (F1).
+`src/pipeline.py` chains all four. `src/evaluate.py` builds the pixel-level **confusion matrix** (TP/FP/FN/TN) and derives
+Precision, Recall, IoU (Jaccard), Dice (F1), reported both macro (mean of per-image
+scores) and micro (all pixels pooled).
 
 ## Layout
 
@@ -29,7 +30,8 @@ src/segmentation.py     step 2  (segment_adaptive, segment_otsu)
 src/morphology.py       step 3
 src/shape_filter.py     step 4
 src/pipeline.py         detect_cracks(); loads outputs/tuned_params.json if present
-src/evaluate.py         pixel_metrics(), average_metrics()
+src/evaluate.py         confusion_counts(), pixel_metrics(), average_metrics (macro),
+                        micro_metrics(), format_confusion()
 src/tune.py             grid-search params to maximize mean Dice; --holdout splits train/test
 src/select_params.py    2-stage selection from a tune.py CSV; --variant constrains which
                         pipeline steps must stay active; --apply writes tuned_params.json
@@ -119,13 +121,40 @@ python src\select_params.py --results outputs\tune_results_round2.csv --variant 
 python main.py --input data\raw\images --gt data\raw\masks --csv outputs\metrics.csv
 ```
 
+**Otsu baseline (the comparison the brief asks for).** `tune.py --method otsu` searches
+the morphology/shape parameters for Otsu separately, so the comparison is fair. Under
+the identical protocol (selected on train, scored on held-out, all four steps active):
+
+| Method       | Held-out Dice | All 118 (macro) | All 118 (micro) |
+|--------------|---------------|-----------------|-----------------|
+| **Adaptive** | **0.5068**    | **0.4991**      | **0.4708**      |
+| Otsu         | 0.2262        | 0.2433          | 0.2612          |
+
+Adaptive wins on 116 of 118 images. Otsu wins only on 023 and 104 — 023 is one of
+adaptive's own failure cases. Otsu's false positives are 2.5x adaptive's (394,732 vs
+157,115 pixels): one global threshold cannot cope with the uneven lighting and shadows
+in road images, which is the numerical argument for choosing adaptive.
+
+**Accuracy is a trap here** and the confusion matrix shows why: crack pixels are 2.29%
+of all pixels, so predicting "no crack" everywhere already scores ~0.977. Adaptive's
+accuracy is 0.9782 and Otsu's is 0.9621 — nearly identical, while their Dice differs
+by 2x. Report IoU and Dice.
+
+Otsu params live in `outputs/tuned_params_otsu.json`; `main.py --params <file>` scores
+a baseline without touching the shipped `tuned_params.json`.
+
 ## Next work
 
-- Compare against Otsu (`--method otsu`) to relate to Dorafshan et al. (2016) — still open.
-- Weakest images after round 2: 021, 065, 042, 023, 052, 097 (use as failure cases).
-  021 and 052 clearly regressed from round 1 — worth explaining in the report.
-- Put the ablation table above into the report; it is direct evidence of what each
-  pipeline step contributes.
+- **Write the report** — no report file exists yet. `docs/Tuning Journal.md` already has
+  the material: before/after tables, the A-D ablation, the Otsu comparison, confusion
+  matrices, and failure cases.
+- Add a Canny/Sobel edge-based baseline: the brief (section 4) wants the literature
+  review to justify threshold-based over edge-based, and a measured number is stronger
+  than citing the paper alone.
+- Failure-case figure panels (image / ground truth / prediction) for 021, 065, 042, 023.
+- Work out why 021 and 052 regressed between tuning round 1 and round 2 — likely the
+  larger `block_size`.
+- Merge the `tuning-round-1` branch into `main`.
 
 ## Conventions
 

@@ -18,7 +18,10 @@ data/raw/masks/*
 
 # ---- Generated outputs ----
 data/results/*
+data/results_otsu/*
 outputs/figures/*
+outputs/figures_otsu/*
+outputs/confusion_*.txt
 outputs/metrics*.csv
 outputs/tuned_params*.json
 outputs/tune_results*.csv

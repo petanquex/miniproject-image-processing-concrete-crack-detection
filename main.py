@@ -14,6 +14,7 @@ python main.py --input data/raw/images/sample.jpg --method otsu
 """
 import argparse
 import csv
+import json
 import os
 import sys
 
@@ -21,7 +22,10 @@ import cv2
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 from pipeline import detect_cracks, overlay_mask          # noqa: E402
-from evaluate import pixel_metrics, average_metrics        # noqa: E402
+from evaluate import (pixel_metrics, average_metrics, confusion_counts,      # noqa: E402
+                      total_confusion, micro_metrics, format_confusion)
+
+METRIC_KEYS = ("precision", "recall", "iou", "dice")
 
 IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
 
@@ -56,12 +60,24 @@ def main():
     ap.add_argument("--outdir", default="data/results")
     ap.add_argument("--figdir", default="outputs/figures")
     ap.add_argument("--csv", default=None, help="write metrics to this CSV")
+    ap.add_argument("--params", default=None,
+                    help="JSON file of pipeline parameters; overrides the "
+                         "tuned/default values (used to score a baseline)")
+    ap.add_argument("--confusion", default=None,
+                    help="write the dataset-level confusion matrix to this file")
     args = ap.parse_args()
+
+    params = None
+    if args.params:
+        with open(args.params) as f:
+            params = json.load(f)
+        print(f"using parameters from {args.params}: {params}")
 
     os.makedirs(args.outdir, exist_ok=True)
     os.makedirs(args.figdir, exist_ok=True)
 
     all_metrics = []
+    all_counts = []
     for img_path in list_images(args.input):
         stem_check = os.path.splitext(os.path.basename(img_path))[0].lower()
         if stem_check in ("sample",):          # skip synthetic test image
@@ -71,7 +87,7 @@ def main():
             print(f"[skip] could not read {img_path}")
             continue
 
-        mask = detect_cracks(image, method=args.method)
+        mask = detect_cracks(image, method=args.method, params=params)
         stem = os.path.splitext(os.path.basename(img_path))[0]
 
         cv2.imwrite(os.path.join(args.outdir, f"{stem}_mask.png"), mask)
@@ -82,26 +98,45 @@ def main():
         if gt_path:
             gt = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
             m = pixel_metrics(mask, gt)
+            counts = confusion_counts(mask, gt)
+            all_counts.append(counts)
             m["image"] = stem
-            all_metrics.append(m)
+            all_metrics.append(dict(m, **counts))
             print(f"{stem}: IoU={m['iou']} Dice={m['dice']} "
                   f"P={m['precision']} R={m['recall']}")
         else:
             print(f"{stem}: mask saved (no ground truth)")
 
     if all_metrics:
-        avg = average_metrics([{k: v for k, v in m.items() if k != "image"}
-                               for m in all_metrics])
-        print("\n=== Average ===")
-        print(avg)
+        macro = average_metrics([{k: m[k] for k in METRIC_KEYS}
+                                 for m in all_metrics])
+        totals = total_confusion(all_counts)
+        micro = micro_metrics(all_counts)
+
+        print()
+        print(format_confusion(totals))
+        print()
+        print("=== Average over", len(all_metrics), "images ===")
+        print("macro (mean of per-image scores):", macro)
+        print("micro (all pixels pooled)       :", micro)
+
+        if args.confusion:
+            os.makedirs(os.path.dirname(args.confusion) or ".", exist_ok=True)
+            with open(args.confusion, "w") as f:
+                f.write(format_confusion(totals) + "\n\n")
+                f.write(f"images: {len(all_metrics)}\n")
+                f.write(f"macro: {macro}\n")
+                f.write(f"micro: {micro}\n")
+            print(f"confusion matrix -> {args.confusion}")
+
         if args.csv:
             os.makedirs(os.path.dirname(args.csv) or ".", exist_ok=True)
+            fields = ["image"] + list(METRIC_KEYS) + ["tp", "fp", "fn", "tn"]
             with open(args.csv, "w", newline="") as f:
-                w = csv.DictWriter(
-                    f, fieldnames=["image", "precision", "recall", "iou", "dice"])
+                w = csv.DictWriter(f, fieldnames=fields)
                 w.writeheader()
                 w.writerows(all_metrics)
-                w.writerow({"image": "AVERAGE", **avg})
+                w.writerow({"image": "AVERAGE", **macro, **totals})
             print(f"metrics -> {args.csv}")
 
 

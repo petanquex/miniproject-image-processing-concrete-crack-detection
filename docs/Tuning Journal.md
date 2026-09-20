@@ -289,3 +289,121 @@ python main.py --input data\raw\images --gt data\raw\masks --csv outputs\metrics
 - [ ] ดู overlay ของภาพ 021, 065, 042, 023 เพื่ออธิบาย failure case ในรายงาน
 - [ ] 021 กับ 052 ถอยหลังจากรอบ 1 ชัดเจน ลองดูว่าเป็นเพราะ `block_size` ที่ใหญ่ขึ้นหรือ `min_area`
 - [ ] ใส่ตาราง ablation A-D ลงรายงาน (เป็นหลักฐานว่าแต่ละ step ในไปป์ไลน์ให้ผลเท่าไร)
+
+---
+
+## 2026-09-20 (ต่อ) — เทียบกับ Otsu + Confusion Matrix
+
+ปิดช่องว่าง 2 ข้อที่โจทย์ (`docs/Mini Project Image Processing.md`) ระบุไว้แต่ยังไม่เคยทำ:
+ข้อ 5 "ใช้ Adaptive Thresholding (เปรียบเทียบกับ Otsu's)" และข้อ 7 "สร้าง Confusion Matrix ระดับพิกเซล"
+
+### 1. Confusion Matrix (`src/evaluate.py`)
+
+เดิม `pixel_metrics()` นับแค่ TP / FP / FN แล้วข้าม TN ไปเลย และไม่เคยแสดงตัวเมทริกซ์ออกมา
+มีแต่ค่า metric ปลายทาง ตอนนี้เพิ่ม:
+
+| ฟังก์ชันใหม่ | ทำอะไร |
+|---|---|
+| `confusion_counts()` | นับ TP / FP / FN / **TN** ของภาพเดียว |
+| `metrics_from_counts()` | แปลง confusion matrix เป็น metric (เพิ่ม specificity, accuracy) |
+| `total_confusion()` | รวม confusion matrix ของทุกภาพเป็นตัวเดียว |
+| `micro_metrics()` | metric แบบ micro: รวมพิกเซลทั้ง dataset แล้วค่อยคำนวณครั้งเดียว |
+| `format_confusion()` | พิมพ์เป็นตาราง |
+
+`pixel_metrics()` กับ `average_metrics()` ยังคืนค่าเหมือนเดิมทุกหลัก (ตรวจแล้ว macro Dice = 0.4991 เท่าเดิม)
+และ `main.py` เพิ่ม `--confusion PATH` กับคอลัมน์ tp/fp/fn/tn ใน CSV
+
+**Macro vs micro** — macro คือเฉลี่ยคะแนนของแต่ละภาพ (ทุกภาพน้ำหนักเท่ากัน) ส่วน micro คือ
+รวมพิกเซลทั้งหมดก่อนแล้วคำนวณทีเดียว (ภาพที่รอยร้าวยาวมีน้ำหนักมากกว่า) การรายงานทั้งคู่
+แสดงว่าคะแนนที่ได้มาจากภาพง่ายไม่กี่ภาพหรือมาจากทั้ง dataset จริง
+
+**Confusion matrix ของ pipeline ปัจจุบัน (adaptive, 118 ภาพ):**
+
+```
+                        GT crack GT background
+pred crack               175,950       157,115
+pred background          238,488    17,553,247
+total pixels: 18,124,800   crack pixels: 414,438 (2.29% ของพิกเซลทั้งหมด)
+```
+
+- macro: P 0.4990 / R 0.5781 / IoU 0.3492 / **Dice 0.4991**
+- micro: P 0.5283 / R 0.4246 / IoU 0.3078 / **Dice 0.4708** / specificity 0.9911 / **accuracy 0.9782**
+
+**accuracy 0.9782 คือกับดัก** ที่โจทย์ข้อ 7 เตือนไว้พอดี: พิกเซลรอยร้าวมีแค่ 2.29% ของภาพ
+ถ้าทายว่า "ไม่มีรอยร้าวเลย" ทุกพิกเซลจะได้ accuracy ประมาณ 0.977 ทันทีโดยไม่ต้องทำอะไร
+ตัวเลขที่มีความหมายจริงคือ IoU กับ Dice — ตารางนี้ใช้อธิบายประเด็นนี้ในรายงานได้โดยตรง
+
+### 2. Otsu baseline
+
+`tune.py` เดิมค้นหาเฉพาะ adaptive ถ้าเอา params ที่จูนมาเพื่อ adaptive ไปครอบ Otsu ก็ไม่แฟร์
+จึงเพิ่ม `--method {adaptive,otsu}` และ `GRID_OTSU` แยกต่างหาก — Otsu เป็น global threshold
+ไม่มี window size และไม่มี offset คอลัมน์ `block_size` กับ `C` จึงตั้งเป็น 0 (ไม่ถูกใช้)
+และค้นหาเฉพาะพารามิเตอร์ของ morphology กับ shape filter
+
+จูน 3 รอบเพราะค่าที่ชนะชนขอบ grid สองครั้ง:
+
+| รอบ | combinations | ผลที่ได้ | ปัญหา |
+|---|---|---|---|
+| a | 180 | held-out Dice 0.1311 | `min_area = 120` ชนขอบสูงสุด |
+| b | 324 | held-out Dice 0.2791 | `open_ksize = 5` ชนขอบสูงสุด |
+| c | 90 | held-out Dice 0.2791 | `open_ksize = 5` ชนะ 7/9/11/15 = เป็นค่าภายในแล้ว ปิดขอบครบ |
+
+สังเกตว่า Otsu ต้องการ `open_ksize = 5` (adaptive ใช้ 3) และ `min_area` ใหญ่กว่ามาก
+เพราะ global threshold ทำให้เกิด blob ขนาดใหญ่เต็มภาพ ต้องใช้ opening แรงๆ กวาดทิ้ง
+
+### 3. ผลเปรียบเทียบ (protocol เดียวกัน: เลือกด้วย train 59 ภาพ วัดบน held-out 59 ภาพ)
+
+| Method | Variant | Held-out Dice | ทั้ง 118 ภาพ (macro) | ทั้ง 118 ภาพ (micro) |
+|---|---|---|---|---|
+| **Adaptive** | เปิดครบ 4 step (ที่ ship) | **0.5068** | **0.4991** | **0.4708** |
+| Adaptive | ไม่บังคับ | 0.5213 | 0.5205 | — |
+| **Otsu** | เปิดครบ 4 step | **0.2262** | **0.2433** | **0.2612** |
+| Otsu | ไม่บังคับ | 0.2791 | 0.2889 | — |
+
+**Adaptive ชนะประมาณ 2 เท่าตัว** เทียบแบบเปิดครบ 4 step เหมือนกัน (0.5068 vs 0.2262)
+
+รายภาพ: **adaptive ชนะ 116 จาก 118 ภาพ** Otsu ชนะแค่ 2 ภาพคือ **023 กับ 104**
+(น่าสนใจตรงที่ 023 เป็นหนึ่งใน failure case ของ adaptive พอดี — เป็นภาพ contrast ต่ำที่
+adaptive กรองรอยร้าวทิ้งเกือบหมด แต่ global threshold กลับจับได้)
+
+- Dice >= 0.5: adaptive 68 ภาพ / Otsu 8 ภาพ
+- Dice < 0.2: adaptive 9 ภาพ / Otsu 41 ภาพ
+
+**Confusion matrix ของ Otsu:**
+
+```
+                        GT crack GT background
+pred crack               121,546       394,732
+pred background          292,892    17,315,630
+```
+
+เทียบกับ adaptive: FP เพิ่มจาก 157,115 เป็น **394,732 (2.5 เท่า)** ขณะที่ TP ลดลง
+คือ Otsu **ทายว่าเป็นรอยร้าวมากขึ้นแต่ถูกน้อยลง** = over-segmentation ตามที่คาด
+
+### 4. อธิบายผล (ใช้ในรายงานได้)
+
+Otsu หาค่า threshold **ค่าเดียวสำหรับทั้งภาพ** จาก histogram ซึ่งใช้ได้ดีเมื่อแสงสม่ำเสมอ
+และภาพมี 2 กลุ่มความสว่างชัดเจน แต่ภาพถนนใน CrackForest มีทั้งเงา คราบ และความสว่าง
+ไม่เท่ากันทั่วภาพ ทำให้ threshold เดียวไปตัดเอาบริเวณที่มืดกว่าค่าเฉลี่ย (เงา/คราบ)
+มาเป็นรอยร้าวด้วย ส่วน adaptive thresholding เทียบแต่ละพิกเซลกับ**ค่าเฉลี่ยของเพื่อนบ้าน
+ในหน้าต่าง 51x51** จึงไม่สนใจว่าโดยรวมภาพนั้นสว่างหรือมืด
+
+นี่คือเหตุผลเชิงตัวเลขที่ใช้ตอบโจทย์ข้อ 5 ได้ว่าทำไมถึงเลือก adaptive เป็นวิธีหลัก
+
+**หมายเหตุเทียบกับ Dorafshan et al. (2016)** ซึ่งใช้ Otsu แล้วได้ผลดี: เปเปอร์นั้นทำกับภาพ
+พื้นผิวคอนกรีตระยะใกล้ในสภาพแสงที่ควบคุมได้ ส่วน CrackForest เป็นภาพผิวถนนในเมืองที่มี
+texture และแสงไม่สม่ำเสมอ ผลที่ต่างกันจึงไม่ได้ขัดกับเปเปอร์ แต่สะท้อนว่า**เงื่อนไขการถ่ายภาพ
+เป็นตัวกำหนดว่า global threshold ใช้ได้หรือไม่** ซึ่งเป็นข้อสรุปที่มีน้ำหนักกว่าการบอกว่าวิธีไหนดีกว่าเฉยๆ
+
+### Reproduce
+
+```powershell
+# จูน Otsu (block_size กับ C ไม่ถูกใช้ ตั้งเป็น 0)
+python src\tune.py --subset 0 --holdout 0.5 --method otsu --csv outputs\tune_results_otsu.csv
+
+# เลือกค่าแบบเปิดครบ 4 step แล้วเขียนไฟล์แยก (ไม่ทับ tuned_params.json ของ adaptive)
+python src\select_params.py --results outputs\tune_results_otsu.csv --method otsu --variant full --out outputs\tuned_params_otsu.json --apply
+
+# วัดผล Otsu เต็ม 118 ภาพ พร้อม confusion matrix
+python main.py --input data\raw\images --gt data\raw\masks --method otsu --params outputs\tuned_params_otsu.json --outdir data\results_otsu --figdir outputs\figures_otsu --csv outputs\metrics_otsu.csv --confusion outputs\confusion_otsu.txt
+```

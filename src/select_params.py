@@ -74,11 +74,22 @@ def main():
     ap.add_argument("--masks", default="data/raw/masks")
     ap.add_argument("--holdout", type=float, default=0.5,
                     help="must match the tune.py run that produced the CSVs")
+    ap.add_argument("--method", default="adaptive", choices=["adaptive", "otsu"],
+                    help="must match the tune.py run that produced the CSVs")
     ap.add_argument("--variant", default="any", choices=sorted(VARIANTS))
     ap.add_argument("--shortlist", type=int, default=300)
+    ap.add_argument("--out", default="outputs/tuned_params.json",
+                    help="where --apply writes the selected parameters")
     ap.add_argument("--apply", action="store_true",
-                    help="write the selection to outputs/tuned_params.json")
+                    help="write the selection to --out")
     args = ap.parse_args()
+
+    if (args.apply and args.method != "adaptive"
+            and args.out == ap.get_default("out")):
+        raise SystemExit(
+            "Otsu is a comparison baseline, not the shipped pipeline: writing "
+            "it to the default tuned_params.json would change what main.py "
+            "runs. Pass --out with a different path.")
 
     combos = read_results(args.results)
     keep = VARIANTS[args.variant]
@@ -100,7 +111,8 @@ def main():
     scored = []
     for values, _ in shortlist:
         p = dict(zip(KEYS, values))
-        dices = np.array([m["dice"] for m in run_per_image(*train, p)])
+        dices = np.array([m["dice"]
+                          for m in run_per_image(*train, p, args.method)])
         stable, mean = fold_score(dices)
         scored.append((stable, mean, p))
     scored.sort(reverse=True, key=lambda r: r[0])
@@ -112,15 +124,16 @@ def main():
     best = scored[0][2]
     print("\nSelected:", best)
     if test_pairs:
-        print("Held-out:", average_metrics(run_per_image(*test, best)))
-    allm = average_metrics(run_per_image(*[a + b for a, b in zip(train, test)], best))
+        print("Held-out:", average_metrics(run_per_image(*test, best, args.method)))
+    allm = average_metrics(
+        run_per_image(*[a + b for a, b in zip(train, test)], best, args.method))
     print("All images:", allm)
 
     if args.apply:
-        os.makedirs("outputs", exist_ok=True)
-        with open("outputs/tuned_params.json", "w") as f:
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        with open(args.out, "w") as f:
             json.dump(best, f, indent=2)
-        print("Wrote outputs/tuned_params.json")
+        print("Wrote", args.out)
 
 
 if __name__ == "__main__":
