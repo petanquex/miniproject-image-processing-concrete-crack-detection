@@ -1,0 +1,26 @@
+{
+  "adaptive": {
+    "precision": 0.5273,
+    "recall": 0.5732,
+    "iou": 0.3533,
+    "dice": 0.5024
+  },
+  "otsu": {
+    "precision": 0.2202,
+    "recall": 0.3998,
+    "iou": 0.1476,
+    "dice": 0.2428
+  },
+  "canny": {
+    "precision": 0.2123,
+    "recall": 0.4337,
+    "iou": 0.1267,
+    "dice": 0.2107
+  },
+  "sobel": {
+    "precision": 0.2853,
+    "recall": 0.4361,
+    "iou": 0.1815,
+    "dice": 0.2927
+  }
+}
